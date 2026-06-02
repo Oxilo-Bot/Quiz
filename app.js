@@ -740,7 +740,7 @@ function renderLiveQuestion(question, session) {
   node.innerHTML = `
     <p class="eyebrow">Question ${session.current_question_index + 1}</p>
     <h2>${escapeHtml(question.body)}</h2>
-    ${question.image_url ? `<img class="question-live-image ${question.question_type === "image_reveal" && !session.show_answer ? "is-hidden-image" : ""}" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
+    ${renderQuestionImage(question, session)}
     ${question.question_type === "free_text" ? `<div class="empty-state">Les joueurs ecrivent une reponse libre.</div>` : ""}
     <div class="answer-grid">
       ${question.question_type === "free_text" ? "" : question.answers.map((answer, index) => `
@@ -751,6 +751,34 @@ function renderLiveQuestion(question, session) {
       `).join("")}
     </div>
   `;
+}
+
+function renderQuestionImage(question, session) {
+  if (!question.image_url) return "";
+  if (question.question_type !== "image_reveal") {
+    return `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />`;
+  }
+
+  const order = [4, 0, 8, 2, 6, 1, 7, 3, 5];
+  const revealed = session.show_answer ? 9 : getRevealedTileCount(session);
+  const cells = order.map((cellIndex, step) => {
+    if (step < revealed) return "";
+    const delay = Math.max(0, step + 1 - revealed);
+    return `<span class="reveal-tile" data-cell="${cellIndex}" style="--delay: ${delay}s"></span>`;
+  }).join("");
+
+  return `
+    <div class="image-reveal">
+      <img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />
+      <div class="reveal-grid" aria-hidden="true">${cells}</div>
+    </div>
+  `;
+}
+
+function getRevealedTileCount(session) {
+  if (!session.question_started_at) return 0;
+  const elapsed = Math.floor((Date.now() - new Date(session.question_started_at).getTime()) / 1000);
+  return Math.max(0, Math.min(9, elapsed));
 }
 
 async function renderLeaderboard(sessionId, container = document.querySelector("#live-question")) {
@@ -1044,7 +1072,7 @@ async function refreshPlayerView(sessionId) {
     view.innerHTML = `
       <p class="eyebrow">Question ${session.current_question_index + 1}</p>
       <h2>${escapeHtml(question.body)}</h2>
-      ${question.image_url ? `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
+      ${renderQuestionImage(question, session)}
       ${session.show_leaderboard ? "" : `
         <form class="form-grid" id="free-answer-form">
           <label class="field">
@@ -1063,7 +1091,7 @@ async function refreshPlayerView(sessionId) {
   view.innerHTML = `
     <p class="eyebrow">Question ${session.current_question_index + 1}</p>
     <h2>${escapeHtml(question.body)}</h2>
-    ${question.image_url ? `<img class="question-live-image ${question.question_type === "image_reveal" && !session.show_answer ? "is-hidden-image" : ""}" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
+    ${renderQuestionImage(question, session)}
     <div class="choice-grid">
       ${question.answers.map((answer, index) => `
         <button class="answer-button ${existing?.answer_index === index ? "is-selected" : ""} ${session.show_answer && index === question.correct_index ? "is-correct-answer" : ""}" type="button" data-answer="${index}" ${existing || session.show_answer ? "disabled" : ""}>
