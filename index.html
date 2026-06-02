@@ -6,6 +6,7 @@
     <title>Quiz Live</title>
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -19,30 +20,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
-    <dialog id="settings-dialog" class="dialog">
-      <form method="dialog" class="dialog-panel" id="settings-form">
-        <div class="dialog-header">
-          <div>
-            <p class="eyebrow">Connexion</p>
-            <h2>Parametres Supabase</h2>
-          </div>
-          <button class="icon-button" type="submit" value="cancel" aria-label="Fermer">x</button>
-        </div>
-        <label class="field">
-          <span>URL du projet</span>
-          <input id="supabase-url" name="url" placeholder="https://xxxx.supabase.co" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Anon key</span>
-          <input id="supabase-key" name="key" placeholder="eyJhbGciOi..." autocomplete="off" />
-        </label>
-        <div class="dialog-actions">
-          <button class="secondary-button" type="submit" value="cancel">Annuler</button>
-          <button class="primary-button" type="submit" value="save">Enregistrer</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog id="confirm-dialog" class="dialog">
       <form method="dialog" class="dialog-panel" id="confirm-form">

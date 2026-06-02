@@ -16,12 +16,12 @@ npm run dev
 1. Cree un projet sur Supabase.
 2. Ouvre l'editeur SQL Supabase.
 3. Execute le fichier `supabase.sql`.
-4. Dans le site, va sur `Admin`, puis clique sur `Configurer Supabase`.
-5. Colle l'URL du projet et la `anon key`.
+4. Ouvre `supabase-config.js`.
+5. Remplace `REMPLACE_MOI_PAR_TA_PUBLIC_KEY` par ta public/publishable key Supabase.
 
 Le code admin n'est pas stocke dans les fichiers du site. Cree-le directement dans Supabase en ajoutant une ligne dans `admin_codes` avec un hash genere par `extensions.crypt('ton-code', extensions.gen_salt('bf'))`.
 
-La cle `anon` peut etre presente cote navigateur. Les policies du fichier SQL sont ouvertes pour faciliter le prototype, sauf la table `admin_codes` qui passe par la fonction `verify_admin_code`. Pour une version publique serieuse, il faudra ajouter Supabase Auth et limiter les droits admin.
+La public/publishable key peut etre presente cote navigateur. Ne mets jamais la secret key dans les fichiers. Les policies du fichier SQL sont ouvertes pour faciliter le prototype, sauf la table `admin_codes` qui passe par la fonction `verify_admin_code`. Pour une version publique serieuse, il faudra ajouter Supabase Auth et limiter les droits admin.
 
 ## Publier sur GitHub Pages
 

@@ -1,4 +1,3 @@
-const CONFIG_KEY = "quiz-live:supabase-config";
 const HOST_TOKEN_KEY = "quiz-live:host-token";
 const PLAYER_KEY = "quiz-live:player";
 const IMAGE_BUCKET = "question-images";
@@ -7,7 +6,6 @@ const ANSWER_COLORS = ["Rouge", "Bleu", "Jaune", "Vert"];
 
 const state = {
   supabase: null,
-  config: loadConfig(),
   subscriptions: [],
   hostToken: localStorage.getItem(HOST_TOKEN_KEY) || crypto.randomUUID(),
   player: loadJson(PLAYER_KEY, null),
@@ -18,8 +16,6 @@ localStorage.setItem(HOST_TOKEN_KEY, state.hostToken);
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
-const settingsDialog = document.querySelector("#settings-dialog");
-const settingsForm = document.querySelector("#settings-form");
 const confirmDialog = document.querySelector("#confirm-dialog");
 const confirmForm = document.querySelector("#confirm-form");
 const confirmMessage = document.querySelector("#confirm-message");
@@ -36,29 +32,6 @@ function init() {
 }
 
 function bindGlobalEvents() {
-  settingsForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (event.submitter?.value === "cancel") {
-      settingsDialog.close();
-      return;
-    }
-
-    const form = new FormData(settingsForm);
-    const url = String(form.get("url") || "").trim();
-    const key = String(form.get("key") || "").trim();
-    if (!url || !key) {
-      showToast("Ajoute l'URL et l'anon key Supabase.");
-      return;
-    }
-
-    state.config = { url, key };
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(state.config));
-    connectSupabase();
-    settingsDialog.close();
-    showToast("Supabase est connecte.");
-    render();
-  });
-
   confirmForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const accepted = event.submitter?.value === "yes";
@@ -69,18 +42,16 @@ function bindGlobalEvents() {
 }
 
 function connectSupabase() {
-  if (!state.config?.url || !state.config?.key || !window.supabase) {
+  const config = window.QUIZ_SUPABASE_CONFIG;
+  const url = config?.url;
+  const key = config?.publishableKey;
+
+  if (!url || !key || key.includes("REMPLACE_MOI") || !window.supabase) {
     state.supabase = null;
     return;
   }
 
-  state.supabase = window.supabase.createClient(state.config.url, state.config.key);
-}
-
-function openSettings() {
-  document.querySelector("#supabase-url").value = state.config?.url || "";
-  document.querySelector("#supabase-key").value = state.config?.key || "";
-  settingsDialog.showModal();
+  state.supabase = window.supabase.createClient(url, key);
 }
 
 function render() {
@@ -137,7 +108,6 @@ function renderAdminGate() {
           <input name="admin_code" required minlength="4" maxlength="80" placeholder="Code secret" autocomplete="off" type="password" />
         </label>
         <button class="primary-button big-button" type="submit" ${disabledIfOffline()}>Entrer</button>
-        <button class="secondary-button" type="button" data-action="open-settings-inline">Configurer Supabase</button>
       </form>
     </section>
   `;
@@ -874,7 +844,7 @@ function connectionNotice() {
   return `
     <div class="status-strip">
       <strong>Supabase n'est pas encore configure.</strong>
-      <button class="secondary-button" type="button" data-action="open-settings-inline">Configurer</button>
+      <span class="muted">Verifie le fichier supabase-config.js.</span>
     </div>
   `;
 }
@@ -885,8 +855,7 @@ function disabledIfOffline() {
 
 function requireSupabase() {
   if (state.supabase) return true;
-  showToast("Configure Supabase avant de continuer.");
-  openSettings();
+  showToast("La configuration Supabase manque dans supabase-config.js.");
   return false;
 }
 
@@ -896,7 +865,6 @@ function redirectHome() {
 }
 
 document.addEventListener("click", (event) => {
-  if (event.target.matches("[data-action='open-settings-inline']")) openSettings();
   if (event.target.matches("[data-action='toggle-quiz-actions']")) {
     const quizId = event.target.dataset.quizId;
     document.querySelector(`[data-quiz-menu="${quizId}"]`)?.classList.toggle("hidden");
@@ -925,10 +893,6 @@ function showToast(message) {
   toast.classList.add("is-visible");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => toast.classList.remove("is-visible"), 2600);
-}
-
-function loadConfig() {
-  return loadJson(CONFIG_KEY, null);
 }
 
 function loadJson(key, fallback) {
