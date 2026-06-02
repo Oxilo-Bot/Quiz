@@ -11,6 +11,7 @@ const state = {
   player: loadJson(PLAYER_KEY, null),
   adminAccess: false,
   editingQuestion: null,
+  questionSaving: false,
 };
 
 localStorage.setItem(HOST_TOKEN_KEY, state.hostToken);
@@ -382,59 +383,67 @@ function updateAnswerFields() {
 async function createQuestion(event, quizId) {
   event.preventDefault();
   if (!requireSupabase()) return;
+  if (state.questionSaving) return;
 
+  state.questionSaving = true;
+  setQuestionSaving(true);
   const form = new FormData(event.currentTarget);
-  const editing = state.editingQuestion;
-  const { count } = editing
-    ? { count: 0 }
-    : await state.supabase
-      .from("questions")
-      .select("id", { count: "exact", head: true })
-      .eq("quiz_id", quizId);
+  try {
+    const editing = state.editingQuestion;
+    const { count } = editing
+      ? { count: 0 }
+      : await state.supabase
+        .from("questions")
+        .select("id", { count: "exact", head: true })
+        .eq("quiz_id", quizId);
 
-  if (!editing && (count || 0) >= MAX_QUESTIONS) {
-    showToast(`Un quiz ne peut pas depasser ${MAX_QUESTIONS} questions.`);
-    return;
+    if (!editing && (count || 0) >= MAX_QUESTIONS) {
+      showToast(`Un quiz ne peut pas depasser ${MAX_QUESTIONS} questions.`);
+      return;
+    }
+
+    const imageFile = form.get("image");
+    const imageUrl = imageFile?.size ? await uploadQuestionImage(quizId, imageFile) : null;
+    if (imageFile?.size && !imageUrl) return;
+    const questionType = String(form.get("question_type") || "multiple_choice");
+    const answerCount = questionType === "free_text" ? 0 : Number(form.get("answer_count") || 4);
+    const answers = questionType === "free_text"
+      ? []
+      : Array.from({ length: answerCount }, (_, index) => String(form.get(`answer_${index}`)).trim());
+    const minPoints = Number(form.get("min_points"));
+    const maxPoints = Number(form.get("max_points"));
+    if (maxPoints < minPoints) {
+      showToast("Les points maximum doivent etre superieurs aux points minimum.");
+      return;
+    }
+
+    const payload = {
+      question_type: questionType,
+      body: String(form.get("question")).trim(),
+      answers,
+      image_url: imageUrl || editing?.image_url || null,
+      correct_index: questionType === "free_text" ? 0 : Number(form.get("correct_index")),
+      duration_seconds: Number(form.get("duration")),
+      min_points: minPoints,
+      max_points: maxPoints,
+    };
+
+    const query = editing
+      ? state.supabase.from("questions").update(payload).eq("id", editing.id)
+      : state.supabase.from("questions").insert({ ...payload, quiz_id: quizId, position: count || 0 });
+
+    const { error } = await query;
+    if (error) return showToast(error.message);
+
+    state.editingQuestion = null;
+    event.currentTarget.reset();
+    setQuestionFormMode(null);
+    showToast(editing ? "Question modifiee." : "Question ajoutee.");
+    await loadQuestions(quizId);
+  } finally {
+    state.questionSaving = false;
+    setQuestionSaving(false);
   }
-
-  const imageFile = form.get("image");
-  const imageUrl = imageFile?.size ? await uploadQuestionImage(quizId, imageFile) : null;
-  if (imageFile?.size && !imageUrl) return;
-  const questionType = String(form.get("question_type") || "multiple_choice");
-  const answerCount = questionType === "free_text" ? 0 : Number(form.get("answer_count") || 4);
-  const answers = questionType === "free_text"
-    ? []
-    : Array.from({ length: answerCount }, (_, index) => String(form.get(`answer_${index}`)).trim());
-  const minPoints = Number(form.get("min_points"));
-  const maxPoints = Number(form.get("max_points"));
-  if (maxPoints < minPoints) {
-    showToast("Les points maximum doivent etre superieurs aux points minimum.");
-    return;
-  }
-
-  const payload = {
-    question_type: questionType,
-    body: String(form.get("question")).trim(),
-    answers,
-    image_url: imageUrl || editing?.image_url || null,
-    correct_index: questionType === "free_text" ? 0 : Number(form.get("correct_index")),
-    duration_seconds: Number(form.get("duration")),
-    min_points: minPoints,
-    max_points: maxPoints,
-  };
-
-  const query = editing
-    ? state.supabase.from("questions").update(payload).eq("id", editing.id)
-    : state.supabase.from("questions").insert({ ...payload, quiz_id: quizId, position: count || 0 });
-
-  const { error } = await query;
-  if (error) return showToast(error.message);
-
-  state.editingQuestion = null;
-  event.currentTarget.reset();
-  setQuestionFormMode(null);
-  showToast(editing ? "Question modifiee." : "Question ajoutee.");
-  await loadQuestions(quizId);
 }
 
 async function uploadQuestionImage(quizId, file) {
@@ -477,6 +486,17 @@ function setQuestionFormMode(question) {
   cancelButton.classList.toggle("hidden", !question);
   if (mode) mode.textContent = question ? "Modification" : "Nouvelle question";
   if (title) title.textContent = question ? "Modifier cette question" : "Ajouter une question";
+}
+
+function setQuestionSaving(isSaving) {
+  const form = document.querySelector("#question-form");
+  if (!form) return;
+
+  const submitButton = form.querySelector("button[type='submit']");
+  const cancelButton = form.querySelector("[data-action='cancel-question-edit']");
+  submitButton.disabled = isSaving;
+  submitButton.textContent = isSaving ? "Enregistrement..." : (state.editingQuestion ? "Enregistrer" : "Ajouter");
+  cancelButton.disabled = isSaving;
 }
 
 function editQuestion(questionId) {
@@ -554,7 +574,7 @@ async function loadQuestions(quizId) {
   const countNode = document.querySelector("#question-count");
   const submitButton = document.querySelector("#question-form button[type='submit']");
   if (countNode) countNode.textContent = `${data.length}/${MAX_QUESTIONS} questions`;
-  if (submitButton && !state.editingQuestion) {
+  if (submitButton && !state.editingQuestion && !state.questionSaving) {
     submitButton.disabled = !state.supabase || data.length >= MAX_QUESTIONS;
     submitButton.textContent = data.length >= MAX_QUESTIONS ? "Limite atteinte" : "Ajouter";
   }
