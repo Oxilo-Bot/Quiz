@@ -24,6 +24,8 @@ create table if not exists public.questions (
   image_url text,
   correct_index int not null check (correct_index between 0 and 3),
   duration_seconds int not null default 20 check (duration_seconds between 5 and 120),
+  min_points int not null default 50 check (min_points >= 0),
+  max_points int not null default 100 check (max_points >= min_points),
   position int not null default 0,
   created_at timestamptz not null default now()
 );
@@ -67,6 +69,12 @@ create unique index if not exists game_sessions_active_code_idx
   where status <> 'finished';
 
 alter table public.questions add column if not exists image_url text;
+alter table public.questions add column if not exists min_points int not null default 50;
+alter table public.questions add column if not exists max_points int not null default 100;
+alter table public.questions drop constraint if exists questions_min_points_check;
+alter table public.questions drop constraint if exists questions_max_points_check;
+alter table public.questions add constraint questions_min_points_check check (min_points >= 0);
+alter table public.questions add constraint questions_max_points_check check (max_points >= min_points);
 alter table public.game_sessions add column if not exists access_enabled boolean not null default true;
 alter table public.game_sessions add column if not exists show_answer boolean not null default false;
 alter table public.game_sessions add column if not exists show_leaderboard boolean not null default false;

@@ -318,6 +318,12 @@ button:disabled {
   gap: 14px;
 }
 
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .field {
   display: grid;
   gap: 7px;
@@ -571,7 +577,8 @@ button:disabled {
   }
 
   .answer-grid,
-  .choice-grid {
+  .choice-grid,
+  .mini-grid {
     grid-template-columns: 1fr;
   }
 }

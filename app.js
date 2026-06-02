@@ -278,6 +278,16 @@ async function renderHostQuiz(quizId) {
             <span>Temps de reponse</span>
             <input name="duration" type="number" min="8" max="90" value="20" required />
           </label>
+          <div class="mini-grid">
+            <label class="field">
+              <span>Points minimum</span>
+              <input name="min_points" type="number" min="0" max="100000" value="50" required />
+            </label>
+            <label class="field">
+              <span>Points maximum</span>
+              <input name="max_points" type="number" min="0" max="100000" value="100" required />
+            </label>
+          </div>
           <button class="primary-button" type="submit" ${disabledIfOffline()}>Ajouter</button>
           <button class="secondary-button hidden" type="button" data-action="cancel-question-edit">Annuler la modification</button>
         </form>
@@ -330,6 +340,12 @@ async function createQuestion(event, quizId) {
   const imageFile = form.get("image");
   const imageUrl = imageFile?.size ? await uploadQuestionImage(quizId, imageFile) : null;
   if (imageFile?.size && !imageUrl) return;
+  const minPoints = Number(form.get("min_points"));
+  const maxPoints = Number(form.get("max_points"));
+  if (maxPoints < minPoints) {
+    showToast("Les points maximum doivent etre superieurs aux points minimum.");
+    return;
+  }
 
   const payload = {
     body: String(form.get("question")).trim(),
@@ -337,6 +353,8 @@ async function createQuestion(event, quizId) {
     image_url: imageUrl || editing?.image_url || null,
     correct_index: Number(form.get("correct_index")),
     duration_seconds: Number(form.get("duration")),
+    min_points: minPoints,
+    max_points: maxPoints,
   };
 
   const query = editing
@@ -407,6 +425,8 @@ function editQuestion(questionId) {
   });
   form.elements.correct_index.value = String(question.correct_index);
   form.elements.duration.value = String(question.duration_seconds);
+  form.elements.min_points.value = String(question.min_points ?? 50);
+  form.elements.max_points.value = String(question.max_points ?? 100);
   form.elements.image.value = "";
   setQuestionFormMode(question);
   form.querySelector("button[type='submit']").disabled = false;
@@ -478,6 +498,7 @@ async function loadQuestions(quizId) {
           <span class="pin">${question.duration_seconds}s</span>
         </header>
         ${question.image_url ? `<img class="question-image-thumb" src="${escapeHtml(question.image_url)}" alt="Image de la question ${index + 1}" />` : ""}
+        <p class="muted compact">Points bonne reponse : ${question.min_points ?? 50} a ${question.max_points ?? 100}</p>
         <p class="muted">${question.answers.map((answer, answerIndex) => answerIndex === question.correct_index ? `✓ ${answer}` : answer).map(escapeHtml).join(" / ")}</p>
         <div class="row-actions">
           <button class="secondary-button" type="button" data-action="edit-question" data-question-id="${question.id}">Modifier</button>
@@ -921,7 +942,7 @@ async function submitAnswer(sessionId, question, answerIndex) {
   if (!requireSupabase()) return;
 
   const isCorrect = answerIndex === question.correct_index;
-  const points = isCorrect ? 100 : 0;
+  const points = isCorrect ? await calculateTimedPoints(sessionId, question) : 0;
   const { error } = await state.supabase.from("game_answers").insert({
     session_id: sessionId,
     player_id: state.player.id,
@@ -939,6 +960,24 @@ async function submitAnswer(sessionId, question, answerIndex) {
 
   showToast("Reponse envoyee.");
   await refreshPlayerView(sessionId);
+}
+
+async function calculateTimedPoints(sessionId, question) {
+  const minPoints = Number(question.min_points ?? 50);
+  const maxPoints = Number(question.max_points ?? 100);
+  if (maxPoints <= minPoints) return minPoints;
+
+  const { data: session, error } = await state.supabase
+    .from("game_sessions")
+    .select("question_started_at")
+    .eq("id", sessionId)
+    .single();
+  if (error || !session?.question_started_at) return minPoints;
+
+  const elapsedSeconds = Math.max(0, (Date.now() - new Date(session.question_started_at).getTime()) / 1000);
+  const duration = Math.max(1, Number(question.duration_seconds || 20));
+  const remainingRatio = Math.max(0, Math.min(1, 1 - elapsedSeconds / duration));
+  return Math.round(minPoints + (maxPoints - minPoints) * remainingRatio);
 }
 
 async function renderFinalScores(sessionId, view) {
