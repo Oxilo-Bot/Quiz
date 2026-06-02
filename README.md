@@ -21,7 +21,9 @@ npm run dev
 
 Le code admin n'est pas stocke dans les fichiers du site. Cree-le directement dans Supabase en ajoutant une ligne dans `admin_codes` avec un hash genere par `extensions.crypt('ton-code', extensions.gen_salt('bf'))`.
 
-La public/publishable key peut etre presente cote navigateur. Ne mets jamais la secret key dans les fichiers. Les policies du fichier SQL sont ouvertes pour faciliter le prototype, sauf la table `admin_codes` qui passe par la fonction `verify_admin_code`. Pour une version publique serieuse, il faudra ajouter Supabase Auth et limiter les droits admin.
+La public/publishable key peut etre presente cote navigateur. Ne mets jamais la secret key dans les fichiers. Les tables SQL sensibles sont bloquees par RLS : l'admin passe par une session temporaire Supabase, les joueurs ont un token prive, et les bonnes reponses ne sont pas envoyees au navigateur avant la revelation.
+
+Note securite : l'upload dans le bucket `question-images` reste public pour fonctionner sur GitHub Pages sans serveur. Un non-admin ne peut pas attacher une image a un quiz sans token admin, mais il pourrait tenter d'envoyer des fichiers dans le bucket. Pour fermer aussi ce point, il faudra passer par Supabase Auth ou une Edge Function.
 
 ## Publier sur GitHub Pages
 
@@ -44,13 +46,12 @@ La public/publishable key peut etre presente cote navigateur. Ne mets jamais la 
 - Lobby joueur avec pseudo.
 - Verrouillage temporaire des entrees et exclusion de joueurs par l'admin.
 - Deroule live question puis top 10 avec bouton continuer.
-- Questions et scores synchronises via Supabase Realtime.
+- Questions et scores synchronises par appels RPC reguliers.
 - Classement final.
 
 ## Prochaines ameliorations utiles
 
-- Authentification admin Supabase.
+- Code admin plus long qu'un simple code a 4 chiffres.
 - Timer visible cote joueur.
-- Bonus de points selon la vitesse.
 - Suppression et reorganisation des questions.
 - Mode plein ecran pour l'ecran admin.

@@ -1,5 +1,6 @@
 const HOST_TOKEN_KEY = "quiz-live:host-token";
 const PLAYER_KEY = "quiz-live:player";
+const ADMIN_SESSION_KEY = "quiz-live:admin-session";
 const IMAGE_BUCKET = "question-images";
 const MAX_QUESTIONS = 20;
 const ANSWER_COLORS = ["Rouge", "Bleu", "Jaune", "Vert"];
@@ -9,7 +10,8 @@ const state = {
   subscriptions: [],
   hostToken: localStorage.getItem(HOST_TOKEN_KEY) || crypto.randomUUID(),
   player: loadJson(PLAYER_KEY, null),
-  adminAccess: false,
+  adminToken: sessionStorage.getItem(ADMIN_SESSION_KEY),
+  adminAccess: Boolean(sessionStorage.getItem(ADMIN_SESSION_KEY)),
   editingQuestion: null,
   questionSaving: false,
 };
@@ -123,18 +125,20 @@ async function verifyAdminCode(event) {
 
   const form = new FormData(event.currentTarget);
   const code = String(form.get("admin_code") || "").trim();
-  const { data, error } = await state.supabase.rpc("verify_admin_code", { admin_code_input: code });
+  const { data, error } = await state.supabase.rpc("create_admin_session", { admin_code_input: code });
 
   if (error) return showToast(error.message);
   if (!data) return showToast("Code admin incorrect.");
 
+  state.adminToken = data;
   state.adminAccess = true;
+  sessionStorage.setItem(ADMIN_SESSION_KEY, data);
   showToast("Acces admin valide.");
   location.hash = "#/host";
 }
 
 async function renderHost() {
-  if (!state.adminAccess) return redirectHome();
+  if (!requireAdminSession()) return;
 
   app.innerHTML = `
     <section class="page">
@@ -176,20 +180,18 @@ async function renderHost() {
 
 async function createQuiz(event) {
   event.preventDefault();
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
 
   const form = new FormData(event.currentTarget);
-  const payload = {
-    title: String(form.get("title")).trim(),
-    description: String(form.get("description") || "").trim(),
-    host_token: state.hostToken,
-  };
-
-  const { data, error } = await state.supabase.from("quizzes").insert(payload).select("id").single();
+  const { data, error } = await adminRpc("admin_create_quiz", {
+    title_input: String(form.get("title")).trim(),
+    description_input: String(form.get("description") || "").trim(),
+    host_token_input: state.hostToken,
+  });
   if (error) return showToast(error.message);
 
   showToast("Quiz cree.");
-  location.hash = `#/host/${data.id}`;
+  location.hash = `#/host/${data}`;
 }
 
 async function loadQuizzes() {
@@ -200,9 +202,7 @@ async function loadQuizzes() {
   }
 
   const { data, error } = await state.supabase
-    .from("quizzes")
-    .select("id,title,description,created_at")
-    .order("created_at", { ascending: false });
+    .rpc("admin_list_quizzes", { admin_token_input: state.adminToken });
 
   if (error) {
     list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -250,15 +250,11 @@ async function loadQuizzes() {
 }
 
 async function deleteQuiz(quizId) {
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
 
-  const { data, error } = await state.supabase
-    .from("quizzes")
-    .delete()
-    .eq("id", quizId)
-    .select("id");
+  const { data, error } = await adminRpc("admin_delete_quiz", { quiz_id_input: quizId });
   if (error) return showToast(error.message);
-  if (!data?.length) return showToast("Quiz introuvable ou deja supprime.");
+  if (!data) return showToast("Quiz introuvable ou deja supprime.");
 
   showToast("Quiz supprime.");
   await loadQuizzes();
@@ -266,7 +262,7 @@ async function deleteQuiz(quizId) {
 
 async function updateQuiz(event) {
   event.preventDefault();
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
 
   const form = event.currentTarget;
   const quizId = event.submitter.dataset.quizId;
@@ -276,10 +272,11 @@ async function updateQuiz(event) {
     description: String(data.get("description") || "").trim(),
   };
 
-  const { error } = await state.supabase
-    .from("quizzes")
-    .update(payload)
-    .eq("id", quizId);
+  const { error } = await adminRpc("admin_update_quiz", {
+    quiz_id_input: quizId,
+    title_input: payload.title,
+    description_input: payload.description,
+  });
   if (error) return showToast(error.message);
 
   showToast("Quiz modifie.");
@@ -287,7 +284,7 @@ async function updateQuiz(event) {
 }
 
 async function renderHostQuiz(quizId) {
-  if (!state.adminAccess) return redirectHome();
+  if (!requireAdminSession()) return;
   if (!quizId) return renderHost();
 
   app.innerHTML = `
@@ -399,9 +396,9 @@ async function renderHostQuiz(quizId) {
 }
 
 async function loadQuizTitle(quizId) {
-  if (!state.supabase) return;
-  const { data } = await state.supabase.from("quizzes").select("title").eq("id", quizId).single();
-  if (data) document.querySelector("#quiz-name").textContent = data.title;
+  if (!state.supabase || !state.adminToken) return;
+  const { data } = await adminRpc("admin_get_quiz_title", { quiz_id_input: quizId });
+  if (data) document.querySelector("#quiz-name").textContent = data;
 }
 
 function updateQuestionTypeFields() {
@@ -438,7 +435,7 @@ function updateAnswerFields() {
 
 async function createQuestion(event, quizId) {
   event.preventDefault();
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
   if (state.questionSaving) return;
 
   state.questionSaving = true;
@@ -446,14 +443,9 @@ async function createQuestion(event, quizId) {
   const form = new FormData(event.currentTarget);
   try {
     const editing = state.editingQuestion;
-    const { count } = editing
-      ? { count: 0 }
-      : await state.supabase
-        .from("questions")
-        .select("id", { count: "exact", head: true })
-        .eq("quiz_id", quizId);
+    const count = editing ? 0 : (state.questions?.length || 0);
 
-    if (!editing && (count || 0) >= MAX_QUESTIONS) {
+    if (!editing && count >= MAX_QUESTIONS) {
       showToast(`Un quiz ne peut pas depasser ${MAX_QUESTIONS} questions.`);
       return;
     }
@@ -484,11 +476,18 @@ async function createQuestion(event, quizId) {
       max_points: maxPoints,
     };
 
-    const query = editing
-      ? state.supabase.from("questions").update(payload).eq("id", editing.id)
-      : state.supabase.from("questions").insert({ ...payload, quiz_id: quizId, position: count || 0 });
-
-    const { error } = await query;
+    const { error } = await adminRpc("admin_upsert_question", {
+      question_id_input: editing?.id || null,
+      quiz_id_input: quizId,
+      question_type_input: payload.question_type,
+      body_input: payload.body,
+      answers_input: payload.answers,
+      image_url_input: payload.image_url,
+      correct_index_input: payload.correct_index,
+      duration_seconds_input: payload.duration_seconds,
+      min_points_input: payload.min_points,
+      max_points_input: payload.max_points,
+    });
     if (error) return showToast(error.message);
 
     state.editingQuestion = null;
@@ -579,9 +578,9 @@ function editQuestion(questionId) {
 }
 
 async function deleteQuestion(questionId, quizId) {
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
 
-  const { error } = await state.supabase.from("questions").delete().eq("id", questionId);
+  const { error } = await adminRpc("admin_delete_question", { question_id_input: questionId });
   if (error) return showToast(error.message);
 
   if (state.editingQuestion?.id === questionId) {
@@ -591,21 +590,7 @@ async function deleteQuestion(questionId, quizId) {
   }
 
   showToast("Question supprimee.");
-  await resequenceQuestions(quizId);
   await loadQuestions(quizId);
-}
-
-async function resequenceQuestions(quizId) {
-  const { data, error } = await state.supabase
-    .from("questions")
-    .select("id")
-    .eq("quiz_id", quizId)
-    .order("position", { ascending: true });
-  if (error) return;
-
-  await Promise.all(data.map((question, index) => (
-    state.supabase.from("questions").update({ position: index }).eq("id", question.id)
-  )));
 }
 
 async function loadQuestions(quizId) {
@@ -615,11 +600,7 @@ async function loadQuestions(quizId) {
     return;
   }
 
-  const { data, error } = await state.supabase
-    .from("questions")
-    .select("*")
-    .eq("quiz_id", quizId)
-    .order("position", { ascending: true });
+  const { data, error } = await adminRpc("admin_list_questions", { quiz_id_input: quizId });
 
   if (error) {
     list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -661,27 +642,12 @@ function questionTypeLabel(question) {
 }
 
 async function startSession(quizId) {
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
 
-  const { data: questions, error: questionError } = await state.supabase
-    .from("questions")
-    .select("id")
-    .eq("quiz_id", quizId)
-    .limit(1);
-
-  if (questionError) return showToast(questionError.message);
-  if (!questions.length) return showToast("Ajoute au moins une question.");
-
-  const payload = {
-    quiz_id: quizId,
-    code: await generateAvailableCode(),
-    host_token: state.hostToken,
-    status: "lobby",
-    access_enabled: true,
-    current_question_index: -1,
-  };
-
-  const { data, error } = await state.supabase.from("game_sessions").insert(payload).select("id,code").single();
+  const { data, error } = await adminRpc("admin_start_session", {
+    quiz_id_input: quizId,
+    host_token_input: state.hostToken,
+  });
   if (error) return showToast(error.message);
 
   showToast(`Session ${data.code} lancee.`);
@@ -689,7 +655,7 @@ async function startSession(quizId) {
 }
 
 async function renderLiveSession(sessionId) {
-  if (!state.adminAccess) return redirectHome();
+  if (!requireAdminSession()) return;
   if (!sessionId) return renderHost();
 
   app.innerHTML = `
@@ -741,17 +707,14 @@ async function renderLiveSession(sessionId) {
 async function refreshHostLive(sessionId) {
   if (!state.supabase) return;
 
-  const { data: session, error } = await state.supabase
-    .from("game_sessions")
-    .select("*, quizzes(title, questions(*))")
-    .eq("id", sessionId)
-    .single();
+  const { data: session, error } = await adminRpc("admin_get_session_state", { session_id_input: sessionId });
 
   if (error) return showToast(error.message);
+  if (!session) return redirectHome();
 
-  const questions = [...(session.quizzes?.questions || [])].sort((a, b) => a.position - b.position);
+  const questions = [...(session.questions || [])].sort((a, b) => a.position - b.position);
   const current = questions[session.current_question_index];
-  document.querySelector("#session-title").textContent = session.quizzes?.title || "Session";
+  document.querySelector("#session-title").textContent = session.quiz_title || "Session";
   document.querySelector("#game-code").textContent = session.code;
   document.querySelector("#session-status").textContent = `${session.status} - ${session.access_enabled ? "entrees ouvertes" : "entrees bloquees"}`;
   updateLiveControls(session);
@@ -773,11 +736,10 @@ function updateLiveControls(session) {
 async function renderPlayers(sessionId, session = null) {
   const list = document.querySelector("#player-list");
   const canShowScores = session?.show_leaderboard || session?.status === "finished";
-  const { data, error } = await state.supabase
-    .from("game_players")
-    .select("id,nickname,score,joined_at")
-    .eq("session_id", sessionId)
-    .order(canShowScores ? "score" : "joined_at", { ascending: canShowScores ? false : true });
+  const { data, error } = await adminRpc("admin_list_players", {
+    session_id_input: sessionId,
+    order_by_score_input: canShowScores,
+  });
 
   if (error) {
     list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -859,12 +821,7 @@ function getRevealedTileCount(session) {
 }
 
 async function renderLeaderboard(sessionId, container = document.querySelector("#live-question")) {
-  const { data, error } = await state.supabase
-    .from("game_players")
-    .select("nickname,score")
-    .eq("session_id", sessionId)
-    .order("score", { ascending: false })
-    .limit(10);
+  const { data, error } = await state.supabase.rpc("get_session_leaderboard", { session_id_input: sessionId });
 
   if (error) {
     container.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -886,32 +843,26 @@ async function renderLeaderboard(sessionId, container = document.querySelector("
 }
 
 async function renderFreeTextChart(sessionId, questionId, container = document.querySelector("#live-question")) {
-  const { data, error } = await state.supabase
-    .from("game_answers")
-    .select("answer_text")
-    .eq("session_id", sessionId)
-    .eq("question_id", questionId);
+  const { data, error } = await state.supabase.rpc("get_free_text_counts", {
+    session_id_input: sessionId,
+    question_id_input: questionId,
+  });
 
   if (error) {
     container.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
     return;
   }
 
-  const counts = new Map();
-  data.forEach((row) => {
-    const answer = normalizeFreeAnswer(row.answer_text);
-    if (!answer) return;
-    counts.set(answer, (counts.get(answer) || 0) + 1);
-  });
-
-  const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
-  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const total = data.reduce((sum, row) => sum + Number(row.answer_count || 0), 0);
+  const rows = data.slice(0, 10);
 
   container.innerHTML = `
     <p class="eyebrow">Reponses libres</p>
     <h2>Graphique des reponses</h2>
     <div class="chart-list">
-      ${rows.length ? rows.map(([answer, count]) => {
+      ${rows.length ? rows.map((row) => {
+        const answer = row.answer_text;
+        const count = Number(row.answer_count || 0);
         const percent = total ? Math.round((count / total) * 100) : 0;
         return `
           <div class="chart-row">
@@ -932,140 +883,41 @@ function normalizeFreeAnswer(value) {
 }
 
 async function startLiveGame(sessionId) {
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
 
-  const { data: session, error } = await state.supabase
-    .from("game_sessions")
-    .select("id,quiz_id,current_question_index,status")
-    .eq("id", sessionId)
-    .single();
+  const { error } = await adminRpc("admin_start_live_game", { session_id_input: sessionId });
   if (error) return showToast(error.message);
-  if (session.status === "finished") return showToast("Cette partie est fermee.");
-  if (session.current_question_index >= 0) return showToast("La partie a deja demarre.");
-
-  const { count } = await state.supabase
-    .from("questions")
-    .select("id", { count: "exact", head: true })
-    .eq("quiz_id", session.quiz_id);
-  if (!count) return showToast("Ajoute au moins une question.");
-
-  const { error: updateError } = await state.supabase
-    .from("game_sessions")
-    .update({ current_question_index: 0, status: "playing", access_enabled: false, show_answer: false, show_leaderboard: false, points_awarded: false, question_started_at: new Date().toISOString() })
-    .eq("id", sessionId);
-  if (updateError) return showToast(updateError.message);
 
   showToast("Partie demarree.");
 }
 
 async function continueLiveGame(sessionId) {
-  if (!requireSupabase()) return;
+  if (!requireAdminSession()) return;
 
-  const { data: session, error } = await state.supabase
-    .from("game_sessions")
-    .select("id,quiz_id,current_question_index,status,show_answer,show_leaderboard,points_awarded")
-    .eq("id", sessionId)
-    .single();
+  const { error } = await adminRpc("admin_continue_live_game", { session_id_input: sessionId });
   if (error) return showToast(error.message);
-  if (session.status !== "playing") return;
-
-  const { count } = await state.supabase
-    .from("questions")
-    .select("id", { count: "exact", head: true })
-    .eq("quiz_id", session.quiz_id);
-
-  if (!session.show_answer) {
-    const { error: updateError } = await state.supabase
-      .from("game_sessions")
-      .update({ show_answer: true })
-      .eq("id", sessionId);
-    if (updateError) return showToast(updateError.message);
-    await awardQuestionPoints(sessionId, session.current_question_index);
-    return;
-  }
-
-  if (!session.show_leaderboard) {
-    const { error: updateError } = await state.supabase
-      .from("game_sessions")
-      .update({ show_leaderboard: true })
-      .eq("id", sessionId);
-    if (updateError) return showToast(updateError.message);
-    return;
-  }
-
-  const nextIndex = session.current_question_index + 1;
-  if (nextIndex >= count) return endSession(sessionId);
-
-  const { error: updateError } = await state.supabase
-    .from("game_sessions")
-    .update({ current_question_index: nextIndex, status: "playing", show_answer: false, show_leaderboard: false, points_awarded: false, question_started_at: new Date().toISOString() })
-    .eq("id", sessionId);
-
-  if (updateError) return showToast(updateError.message);
-}
-
-async function awardQuestionPoints(sessionId, questionIndex) {
-  const { data: session, error: sessionError } = await state.supabase
-    .from("game_sessions")
-    .select("id,points_awarded,quizzes(questions(*))")
-    .eq("id", sessionId)
-    .single();
-  if (sessionError) return showToast(sessionError.message);
-  if (session.points_awarded) return;
-
-  const { data: lock, error: lockError } = await state.supabase
-    .from("game_sessions")
-    .update({ points_awarded: true })
-    .eq("id", sessionId)
-    .eq("points_awarded", false)
-    .select("id")
-    .maybeSingle();
-  if (lockError) return showToast(lockError.message);
-  if (!lock) return;
-
-  const questions = [...(session.quizzes?.questions || [])].sort((a, b) => a.position - b.position);
-  const question = questions[questionIndex];
-  if (!question || question.question_type === "free_text") return;
-
-  const { data: answers, error: answersError } = await state.supabase
-    .from("game_answers")
-    .select("id,player_id,points,is_correct")
-    .eq("session_id", sessionId)
-    .eq("question_id", question.id)
-    .eq("is_correct", true);
-  if (answersError) return showToast(answersError.message);
-
-  await Promise.all((answers || []).map((answer) => (
-    answer.points > 0
-      ? state.supabase.rpc("increment_player_score", { player_id_input: answer.player_id, points_input: answer.points })
-      : Promise.resolve()
-  )));
 }
 
 async function endSession(sessionId) {
-  if (!requireSupabase()) return;
-  const { error } = await state.supabase
-    .from("game_sessions")
-    .update({ status: "finished", access_enabled: false, show_answer: false, show_leaderboard: false, points_awarded: false })
-    .eq("id", sessionId);
+  if (!requireAdminSession()) return;
+  const { error } = await adminRpc("admin_end_session", { session_id_input: sessionId });
   if (error) return showToast(error.message);
   showToast("Partie terminee.");
 }
 
 async function setSessionAccess(sessionId, enabled) {
-  if (!requireSupabase()) return;
-  const { error } = await state.supabase
-    .from("game_sessions")
-    .update({ access_enabled: enabled })
-    .eq("id", sessionId)
-    .neq("status", "finished");
+  if (!requireAdminSession()) return;
+  const { error } = await adminRpc("admin_set_session_access", {
+    session_id_input: sessionId,
+    enabled_input: enabled,
+  });
   if (error) return showToast(error.message);
   showToast(enabled ? "Entrees rouvertes." : "Entrees bloquees.");
 }
 
 async function kickPlayer(playerId) {
-  if (!requireSupabase()) return;
-  const { error } = await state.supabase.from("game_players").delete().eq("id", playerId);
+  if (!requireAdminSession()) return;
+  const { error } = await adminRpc("admin_kick_player", { player_id_input: playerId });
   if (error) return showToast(error.message);
   showToast("Joueur retire de la partie.");
 }
@@ -1078,31 +930,20 @@ async function joinGame(event) {
   const code = String(form.get("code")).trim().toUpperCase();
   const nickname = String(form.get("nickname")).trim();
 
-  const { data: session, error: sessionError } = await state.supabase
-    .from("game_sessions")
-    .select("id,status,access_enabled")
-    .eq("code", code)
-    .neq("status", "finished")
-    .single();
-
-  if (sessionError || !session) return showToast("Partie introuvable.");
-  if (!session.access_enabled) return showToast("L'acces a cette partie est temporairement bloque.");
-
-  const { data: player, error } = await state.supabase
-    .from("game_players")
-    .insert({ session_id: session.id, nickname, score: 0 })
-    .select("id,session_id,nickname")
-    .single();
+  const { data: player, error } = await state.supabase.rpc("join_game_by_code", {
+    code_input: code,
+    nickname_input: nickname,
+  });
 
   if (error) return showToast(error.message);
 
   state.player = player;
   localStorage.setItem(PLAYER_KEY, JSON.stringify(player));
-  location.hash = `#/play/${session.id}`;
+  location.hash = `#/play/${player.session_id}`;
 }
 
 async function renderPlay(sessionId) {
-  if (!state.player || state.player.session_id !== sessionId) return renderHome();
+  if (!state.player?.player_token || state.player.session_id !== sessionId) return renderHome();
 
   app.innerHTML = `
     <section class="page player-page">
@@ -1129,33 +970,26 @@ async function renderPlay(sessionId) {
 async function refreshPlayerView(sessionId) {
   if (!state.supabase) return;
 
-  const { data: playerStillHere, error: playerError } = await state.supabase
-    .from("game_players")
-    .select("id,nickname,score")
-    .eq("id", state.player.id)
-    .maybeSingle();
+  const { data, error } = await state.supabase.rpc("get_player_state", {
+    player_id_input: state.player.id,
+    player_token_input: state.player.player_token,
+  });
 
-  if (playerError) return showToast(playerError.message);
-  if (!playerStillHere) {
+  if (error) return showToast(error.message);
+  if (!data?.player) {
     localStorage.removeItem(PLAYER_KEY);
     state.player = null;
     showToast("Tu as quitte la partie.");
     location.hash = "#/";
     return;
   }
+
+  const playerStillHere = data.player;
+  const session = data.session;
+  const question = data.question;
+  const existing = data.answer;
   updatePlayerScoreBar(playerStillHere);
-
-  const { data: session, error } = await state.supabase
-    .from("game_sessions")
-    .select("*, quizzes(title, questions(*))")
-    .eq("id", sessionId)
-    .single();
-
-  if (error) return showToast(error.message);
-
-  const questions = [...(session.quizzes?.questions || [])].sort((a, b) => a.position - b.position);
-  const question = questions[session.current_question_index];
-  document.querySelector("#player-status").textContent = session.quizzes?.title || "Partie en cours";
+  document.querySelector("#player-status").textContent = session.quiz_title || "Partie en cours";
 
   const view = document.querySelector("#player-view");
   if (session.status === "lobby") {
@@ -1180,14 +1014,6 @@ async function refreshPlayerView(sessionId) {
     view.innerHTML = `<div class="empty-state">En attente de la prochaine question.</div>`;
     return;
   }
-
-  const { data: existing } = await state.supabase
-    .from("game_answers")
-    .select("id,answer_index,answer_text,is_correct,points")
-    .eq("session_id", sessionId)
-    .eq("player_id", state.player.id)
-    .eq("question_id", question.id)
-    .maybeSingle();
 
   if (question.question_type === "free_text") {
     view.innerHTML = `
@@ -1233,15 +1059,11 @@ async function refreshPlayerView(sessionId) {
 async function submitAnswer(sessionId, question, answerIndex) {
   if (!requireSupabase()) return;
 
-  const isCorrect = answerIndex === question.correct_index;
-  const points = isCorrect ? await calculateTimedPoints(sessionId, question) : 0;
-  const { error } = await state.supabase.from("game_answers").insert({
-    session_id: sessionId,
-    player_id: state.player.id,
-    question_id: question.id,
-    answer_index: answerIndex,
-    is_correct: isCorrect,
-    points,
+  const { error } = await state.supabase.rpc("submit_choice_answer", {
+    player_id_input: state.player.id,
+    player_token_input: state.player.player_token,
+    question_id_input: question.id,
+    answer_index_input: answerIndex,
   });
 
   if (error) return showToast(error.message);
@@ -1284,14 +1106,11 @@ async function submitFreeAnswer(event, sessionId, question) {
   const answerText = String(form.get("answer_text") || "").trim();
   if (!answerText) return;
 
-  const { error } = await state.supabase.from("game_answers").insert({
-    session_id: sessionId,
-    player_id: state.player.id,
-    question_id: question.id,
-    answer_index: null,
-    answer_text: answerText,
-    is_correct: false,
-    points: 0,
+  const { error } = await state.supabase.rpc("submit_free_answer", {
+    player_id_input: state.player.id,
+    player_token_input: state.player.player_token,
+    question_id_input: question.id,
+    answer_text_input: answerText,
   });
 
   if (error) return showToast(error.message);
@@ -1299,31 +1118,8 @@ async function submitFreeAnswer(event, sessionId, question) {
   await refreshPlayerView(sessionId);
 }
 
-async function calculateTimedPoints(sessionId, question) {
-  const minPoints = Number(question.min_points ?? 50);
-  const maxPoints = Number(question.max_points ?? 100);
-  if (maxPoints <= minPoints) return minPoints;
-
-  const { data: session, error } = await state.supabase
-    .from("game_sessions")
-    .select("question_started_at")
-    .eq("id", sessionId)
-    .single();
-  if (error || !session?.question_started_at) return minPoints;
-
-  const elapsedSeconds = Math.max(0, (Date.now() - new Date(session.question_started_at).getTime()) / 1000);
-  const duration = Math.max(1, Number(question.duration_seconds || 20));
-  const remainingRatio = Math.max(0, Math.min(1, 1 - elapsedSeconds / duration));
-  return Math.round(minPoints + (maxPoints - minPoints) * remainingRatio);
-}
-
 async function renderFinalScores(sessionId, view) {
-  const { data, error } = await state.supabase
-    .from("game_players")
-    .select("nickname,score")
-    .eq("session_id", sessionId)
-    .order("score", { ascending: false })
-    .limit(10);
+  const { data, error } = await state.supabase.rpc("get_session_leaderboard", { session_id_input: sessionId });
 
   if (error) {
     view.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -1344,41 +1140,16 @@ async function renderFinalScores(sessionId, view) {
   `;
 }
 
-async function generateAvailableCode() {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    const { data } = await state.supabase
-      .from("game_sessions")
-      .select("id")
-      .eq("code", code)
-      .neq("status", "finished")
-      .maybeSingle();
-    if (!data) return code;
-  }
-  return String(Date.now()).slice(-6);
-}
-
 function subscribeSession(sessionId, callback) {
-  if (!state.supabase) return;
-
-  let channel = state.supabase
-    .channel(`session-${sessionId}`)
-    .on("postgres_changes", { event: "*", schema: "public", table: "game_sessions", filter: `id=eq.${sessionId}` }, callback)
-    .on("postgres_changes", { event: "*", schema: "public", table: "game_players", filter: `session_id=eq.${sessionId}` }, callback)
-    .on("postgres_changes", { event: "*", schema: "public", table: "game_answers", filter: `session_id=eq.${sessionId}` }, callback);
-
-  if (state.player?.session_id === sessionId) {
-    channel = channel.on("postgres_changes", { event: "*", schema: "public", table: "game_players", filter: `id=eq.${state.player.id}` }, callback);
-  }
-
-  channel = channel.subscribe();
-
-  state.subscriptions.push(channel);
+  const intervalId = window.setInterval(callback, 1000);
+  state.subscriptions.push({ type: "interval", id: intervalId });
 }
 
 function unsubscribeAll() {
-  if (!state.supabase) return;
-  state.subscriptions.forEach((channel) => state.supabase.removeChannel(channel));
+  state.subscriptions.forEach((subscription) => {
+    if (subscription.type === "interval") window.clearInterval(subscription.id);
+    else state.supabase?.removeChannel(subscription);
+  });
   state.subscriptions = [];
 }
 
@@ -1400,6 +1171,22 @@ function requireSupabase() {
   if (state.supabase) return true;
   showToast("La configuration Supabase manque dans supabase-config.js.");
   return false;
+}
+
+function requireAdminSession() {
+  if (requireSupabase() && state.adminAccess && state.adminToken) return true;
+  state.adminAccess = false;
+  state.adminToken = null;
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  redirectHome();
+  return false;
+}
+
+async function adminRpc(name, args = {}) {
+  return state.supabase.rpc(name, {
+    admin_token_input: state.adminToken,
+    ...args,
+  });
 }
 
 function redirectHome() {
