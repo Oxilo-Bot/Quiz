@@ -10,6 +10,7 @@ const state = {
   hostToken: localStorage.getItem(HOST_TOKEN_KEY) || crypto.randomUUID(),
   player: loadJson(PLAYER_KEY, null),
   adminAccess: false,
+  editingQuestion: null,
 };
 
 localStorage.setItem(HOST_TOKEN_KEY, state.hostToken);
@@ -273,6 +274,7 @@ async function renderHostQuiz(quizId) {
             <input name="duration" type="number" min="8" max="90" value="20" required />
           </label>
           <button class="primary-button" type="submit" ${disabledIfOffline()}>Ajouter</button>
+          <button class="secondary-button hidden" type="button" data-action="cancel-question-edit">Annuler la modification</button>
         </form>
         <div class="panel">
           <div class="status-strip">
@@ -306,12 +308,15 @@ async function createQuestion(event, quizId) {
   if (!requireSupabase()) return;
 
   const form = new FormData(event.currentTarget);
-  const { count } = await state.supabase
-    .from("questions")
-    .select("id", { count: "exact", head: true })
-    .eq("quiz_id", quizId);
+  const editing = state.editingQuestion;
+  const { count } = editing
+    ? { count: 0 }
+    : await state.supabase
+      .from("questions")
+      .select("id", { count: "exact", head: true })
+      .eq("quiz_id", quizId);
 
-  if ((count || 0) >= MAX_QUESTIONS) {
+  if (!editing && (count || 0) >= MAX_QUESTIONS) {
     showToast(`Un quiz ne peut pas depasser ${MAX_QUESTIONS} questions.`);
     return;
   }
@@ -321,20 +326,24 @@ async function createQuestion(event, quizId) {
   if (imageFile?.size && !imageUrl) return;
 
   const payload = {
-    quiz_id: quizId,
     body: String(form.get("question")).trim(),
     answers: [0, 1, 2, 3].map((index) => String(form.get(`answer_${index}`)).trim()),
-    image_url: imageUrl,
+    image_url: imageUrl || editing?.image_url || null,
     correct_index: Number(form.get("correct_index")),
     duration_seconds: Number(form.get("duration")),
-    position: count || 0,
   };
 
-  const { error } = await state.supabase.from("questions").insert(payload);
+  const query = editing
+    ? state.supabase.from("questions").update(payload).eq("id", editing.id)
+    : state.supabase.from("questions").insert({ ...payload, quiz_id: quizId, position: count || 0 });
+
+  const { error } = await query;
   if (error) return showToast(error.message);
 
+  state.editingQuestion = null;
   event.currentTarget.reset();
-  showToast("Question ajoutee.");
+  setQuestionFormMode(null);
+  showToast(editing ? "Question modifiee." : "Question ajoutee.");
   await loadQuestions(quizId);
 }
 
@@ -366,6 +375,50 @@ async function uploadQuestionImage(quizId, file) {
   return data.publicUrl;
 }
 
+function setQuestionFormMode(question) {
+  const form = document.querySelector("#question-form");
+  if (!form) return;
+
+  const submitButton = form.querySelector("button[type='submit']");
+  const cancelButton = form.querySelector("[data-action='cancel-question-edit']");
+  submitButton.textContent = question ? "Enregistrer" : "Ajouter";
+  cancelButton.classList.toggle("hidden", !question);
+}
+
+function editQuestion(questionId) {
+  const question = state.questions?.find((item) => item.id === questionId);
+  const form = document.querySelector("#question-form");
+  if (!question || !form) return;
+
+  state.editingQuestion = question;
+  form.elements.question.value = question.body;
+  question.answers.forEach((answer, index) => {
+    form.elements[`answer_${index}`].value = answer;
+  });
+  form.elements.correct_index.value = String(question.correct_index);
+  form.elements.duration.value = String(question.duration_seconds);
+  form.elements.image.value = "";
+  setQuestionFormMode(question);
+  form.querySelector("button[type='submit']").disabled = false;
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function deleteQuestion(questionId, quizId) {
+  if (!requireSupabase()) return;
+
+  const { error } = await state.supabase.from("questions").delete().eq("id", questionId);
+  if (error) return showToast(error.message);
+
+  if (state.editingQuestion?.id === questionId) {
+    state.editingQuestion = null;
+    document.querySelector("#question-form")?.reset();
+    setQuestionFormMode(null);
+  }
+
+  showToast("Question supprimee.");
+  await loadQuestions(quizId);
+}
+
 async function loadQuestions(quizId) {
   const list = document.querySelector("#question-list");
   if (!state.supabase) {
@@ -384,10 +437,11 @@ async function loadQuestions(quizId) {
     return;
   }
 
+  state.questions = data;
   const countNode = document.querySelector("#question-count");
   const submitButton = document.querySelector("#question-form button[type='submit']");
   if (countNode) countNode.textContent = `${data.length}/${MAX_QUESTIONS} questions`;
-  if (submitButton) {
+  if (submitButton && !state.editingQuestion) {
     submitButton.disabled = !state.supabase || data.length >= MAX_QUESTIONS;
     submitButton.textContent = data.length >= MAX_QUESTIONS ? "Limite atteinte" : "Ajouter";
   }
@@ -401,6 +455,10 @@ async function loadQuestions(quizId) {
         </header>
         ${question.image_url ? `<img class="question-image-thumb" src="${escapeHtml(question.image_url)}" alt="Image de la question ${index + 1}" />` : ""}
         <p class="muted">${question.answers.map((answer, answerIndex) => answerIndex === question.correct_index ? `✓ ${answer}` : answer).map(escapeHtml).join(" / ")}</p>
+        <div class="row-actions">
+          <button class="secondary-button" type="button" data-action="edit-question" data-question-id="${question.id}">Modifier</button>
+          <button class="danger-button" type="button" data-action="delete-question" data-question-id="${question.id}" data-quiz-id="${quizId}">Supprimer</button>
+        </div>
       </article>
     `).join("")
     : `<div class="empty-state">Ajoute au moins une question avant de lancer la partie.</div>`;
@@ -455,7 +513,7 @@ async function renderLiveSession(sessionId) {
           <div class="game-code" id="game-code">----</div>
           <div class="row-actions">
             <button class="primary-button" type="button" data-action="start-live-game" ${disabledIfOffline()}>Demarrer</button>
-            <button class="secondary-button" type="button" data-action="next-question" ${disabledIfOffline()}>Question suivante</button>
+            <button class="primary-button hidden" type="button" data-action="continue-live-game" ${disabledIfOffline()}>Continuer</button>
             <button class="secondary-button" type="button" data-action="set-session-access" data-session-id="${sessionId}" data-enabled="false" ${disabledIfOffline()}>Bloquer les entrees</button>
             <button class="secondary-button" type="button" data-action="set-session-access" data-session-id="${sessionId}" data-enabled="true" ${disabledIfOffline()}>Rouvrir les entrees</button>
             <button class="danger-button" type="button" data-action="end-session" ${disabledIfOffline()}>Close</button>
@@ -474,7 +532,7 @@ async function renderLiveSession(sessionId) {
   `;
 
   document.querySelector("[data-action='start-live-game']").addEventListener("click", () => startLiveGame(sessionId));
-  document.querySelector("[data-action='next-question']").addEventListener("click", () => advanceQuestion(sessionId));
+  document.querySelector("[data-action='continue-live-game']").addEventListener("click", () => continueLiveGame(sessionId));
   document.querySelector("[data-action='end-session']").addEventListener("click", () => endSession(sessionId));
   await refreshHostLive(sessionId);
   subscribeSession(sessionId, () => refreshHostLive(sessionId));
@@ -495,10 +553,21 @@ async function refreshHostLive(sessionId) {
   const current = questions[session.current_question_index];
   document.querySelector("#session-title").textContent = session.quizzes?.title || "Session";
   document.querySelector("#game-code").textContent = session.code;
-  document.querySelector("#session-status").textContent = `${session.status} · ${session.access_enabled ? "entrees ouvertes" : "entrees bloquees"}`;
+  document.querySelector("#session-status").textContent = `${session.status} - ${session.access_enabled ? "entrees ouvertes" : "entrees bloquees"}`;
+  updateLiveControls(session);
 
   await renderPlayers(sessionId);
   renderLiveQuestion(current, session);
+}
+
+function updateLiveControls(session) {
+  const startButton = document.querySelector("[data-action='start-live-game']");
+  const continueButton = document.querySelector("[data-action='continue-live-game']");
+  const accessButtons = document.querySelectorAll("[data-action='set-session-access']");
+
+  startButton?.classList.toggle("hidden", session.status !== "lobby");
+  continueButton?.classList.toggle("hidden", session.status !== "playing");
+  accessButtons.forEach((button) => button.classList.toggle("hidden", session.status !== "lobby"));
 }
 
 async function renderPlayers(sessionId) {
@@ -534,6 +603,11 @@ function renderLiveQuestion(question, session) {
     return;
   }
 
+  if (session.show_leaderboard) {
+    renderLeaderboard(session.id, node);
+    return;
+  }
+
   if (!question) {
     node.innerHTML = `<div class="empty-state">La partie est dans le lobby. Lance la premiere question.</div>`;
     return;
@@ -545,6 +619,33 @@ function renderLiveQuestion(question, session) {
     ${question.image_url ? `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
     <div class="answer-grid">
       ${question.answers.map((answer) => `<div class="answer-tile">${escapeHtml(answer)}</div>`).join("")}
+    </div>
+  `;
+}
+
+async function renderLeaderboard(sessionId, container = document.querySelector("#live-question")) {
+  const { data, error } = await state.supabase
+    .from("game_players")
+    .select("nickname,score")
+    .eq("session_id", sessionId)
+    .order("score", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    container.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <p class="eyebrow">Classement</p>
+    <h2>Top 10</h2>
+    <div class="leaderboard-list">
+      ${data.length ? data.map((player, index) => `
+        <div class="score-row leaderboard-row">
+          <strong>${index + 1}. ${escapeHtml(player.nickname)}</strong>
+          <span class="pin">${player.score} pts</span>
+        </div>
+      `).join("") : `<div class="empty-state">Aucun score pour l'instant.</div>`}
     </div>
   `;
 }
@@ -569,34 +670,44 @@ async function startLiveGame(sessionId) {
 
   const { error: updateError } = await state.supabase
     .from("game_sessions")
-    .update({ current_question_index: 0, status: "playing", access_enabled: false, question_started_at: new Date().toISOString() })
+    .update({ current_question_index: 0, status: "playing", access_enabled: false, show_leaderboard: false, question_started_at: new Date().toISOString() })
     .eq("id", sessionId);
   if (updateError) return showToast(updateError.message);
 
   showToast("Partie demarree.");
 }
 
-async function advanceQuestion(sessionId) {
+async function continueLiveGame(sessionId) {
   if (!requireSupabase()) return;
 
   const { data: session, error } = await state.supabase
     .from("game_sessions")
-    .select("id,quiz_id,current_question_index,status")
+    .select("id,quiz_id,current_question_index,status,show_leaderboard")
     .eq("id", sessionId)
     .single();
   if (error) return showToast(error.message);
+  if (session.status !== "playing") return;
 
   const { count } = await state.supabase
     .from("questions")
     .select("id", { count: "exact", head: true })
     .eq("quiz_id", session.quiz_id);
 
+  if (!session.show_leaderboard) {
+    const { error: updateError } = await state.supabase
+      .from("game_sessions")
+      .update({ show_leaderboard: true })
+      .eq("id", sessionId);
+    if (updateError) return showToast(updateError.message);
+    return;
+  }
+
   const nextIndex = session.current_question_index + 1;
   if (nextIndex >= count) return endSession(sessionId);
 
   const { error: updateError } = await state.supabase
     .from("game_sessions")
-    .update({ current_question_index: nextIndex, status: "playing", question_started_at: new Date().toISOString() })
+    .update({ current_question_index: nextIndex, status: "playing", show_leaderboard: false, question_started_at: new Date().toISOString() })
     .eq("id", sessionId);
 
   if (updateError) return showToast(updateError.message);
@@ -720,6 +831,11 @@ async function refreshPlayerView(sessionId) {
     return;
   }
 
+  if (session.show_leaderboard) {
+    await renderLeaderboard(sessionId, view);
+    return;
+  }
+
   if (!question) {
     view.innerHTML = `<div class="empty-state">En attente de la prochaine question.</div>`;
     return;
@@ -780,7 +896,8 @@ async function renderFinalScores(sessionId, view) {
     .from("game_players")
     .select("nickname,score")
     .eq("session_id", sessionId)
-    .order("score", { ascending: false });
+    .order("score", { ascending: false })
+    .limit(10);
 
   if (error) {
     view.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -789,7 +906,7 @@ async function renderFinalScores(sessionId, view) {
 
   view.innerHTML = `
     <p class="eyebrow">Resultats</p>
-    <h2>Classement final</h2>
+    <h2>Top 10 final</h2>
     <div class="list">
       ${data.map((player, index) => `
         <div class="score-row">
@@ -879,6 +996,19 @@ document.addEventListener("click", (event) => {
   }
   if (event.target.matches("[data-action='set-session-access']")) {
     setSessionAccess(event.target.dataset.sessionId, event.target.dataset.enabled === "true");
+  }
+  if (event.target.matches("[data-action='edit-question']")) {
+    editQuestion(event.target.dataset.questionId);
+  }
+  if (event.target.matches("[data-action='delete-question']")) {
+    const questionId = event.target.dataset.questionId;
+    const quizId = event.target.dataset.quizId;
+    askConfirmation("Supprimer cette question ?", () => deleteQuestion(questionId, quizId));
+  }
+  if (event.target.matches("[data-action='cancel-question-edit']")) {
+    state.editingQuestion = null;
+    document.querySelector("#question-form")?.reset();
+    setQuestionFormMode(null);
   }
 });
 

@@ -36,10 +36,12 @@ La public/publishable key peut etre presente cote navigateur. Ne mets jamais la 
 - Acces admin via code verifie par Supabase.
 - Ajout de questions avec 4 reponses et une bonne reponse.
 - Images de questions via Supabase Storage.
+- Modification et suppression des questions par l'admin.
 - Limite de 20 questions par quiz.
 - Creation d'une session avec code a 6 chiffres.
 - Lobby joueur avec pseudo.
 - Verrouillage temporaire des entrees et exclusion de joueurs par l'admin.
+- Deroule live question puis top 10 avec bouton continuer.
 - Questions et scores synchronises via Supabase Realtime.
 - Classement final.
 

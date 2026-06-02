@@ -430,6 +430,21 @@ button:disabled {
   margin: 12px 0 16px;
 }
 
+.leaderboard-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.leaderboard-row {
+  min-height: 58px;
+}
+
+.leaderboard-row:first-child {
+  border-color: rgba(255, 211, 78, 0.5);
+  box-shadow: 0 0 22px rgba(255, 211, 78, 0.12);
+}
+
 .danger-icon {
   color: white;
   background: rgba(240, 95, 120, 0.22);
