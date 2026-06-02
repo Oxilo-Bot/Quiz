@@ -161,6 +161,7 @@ drop policy if exists "public upload question images" on storage.objects;
 drop policy if exists "public read quizzes" on public.quizzes;
 drop policy if exists "public insert quizzes" on public.quizzes;
 drop policy if exists "public update quizzes" on public.quizzes;
+drop policy if exists "public delete quizzes" on public.quizzes;
 drop policy if exists "public read questions" on public.questions;
 drop policy if exists "public insert questions" on public.questions;
 drop policy if exists "public update questions" on public.questions;
@@ -178,6 +179,7 @@ drop policy if exists "public insert answers" on public.game_answers;
 create policy "public read quizzes" on public.quizzes for select using (true);
 create policy "public insert quizzes" on public.quizzes for insert with check (true);
 create policy "public update quizzes" on public.quizzes for update using (true);
+create policy "public delete quizzes" on public.quizzes for delete using (true);
 
 create policy "public read questions" on public.questions for select using (true);
 create policy "public insert questions" on public.questions for insert with check (true);

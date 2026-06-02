@@ -224,10 +224,21 @@ async function loadQuizzes() {
         <div class="row-actions quiz-menu hidden" data-quiz-menu="${quiz.id}">
           <a class="primary-button" href="#/host/${quiz.id}">Modifier</a>
           <button class="secondary-button" type="button" data-action="confirm-start-session" data-quiz-id="${quiz.id}" data-quiz-title="${escapeHtml(quiz.title)}">Lancer</button>
+          <button class="danger-button" type="button" data-action="delete-quiz" data-quiz-id="${quiz.id}" data-quiz-title="${escapeHtml(quiz.title)}">Supprimer</button>
         </div>
       </article>
     `).join("")
     : `<div class="empty-state">Aucun quiz pour l'instant.</div>`;
+}
+
+async function deleteQuiz(quizId) {
+  if (!requireSupabase()) return;
+
+  const { error } = await state.supabase.from("quizzes").delete().eq("id", quizId);
+  if (error) return showToast(error.message);
+
+  showToast("Quiz supprime.");
+  await loadQuizzes();
 }
 
 async function renderHostQuiz(quizId) {
@@ -1292,6 +1303,11 @@ document.addEventListener("click", (event) => {
     const quizId = event.target.dataset.quizId;
     const quizTitle = event.target.dataset.quizTitle || "ce quiz";
     askConfirmation(`Vous etes sur de lancer le quizz "${quizTitle}" ?`, () => startSession(quizId));
+  }
+  if (event.target.matches("[data-action='delete-quiz']")) {
+    const quizId = event.target.dataset.quizId;
+    const quizTitle = event.target.dataset.quizTitle || "ce quiz";
+    askConfirmation(`Supprimer definitivement le quiz "${quizTitle}" ?`, () => deleteQuiz(quizId));
   }
   if (event.target.matches("[data-action='kick-player']")) {
     kickPlayer(event.target.dataset.playerId);
