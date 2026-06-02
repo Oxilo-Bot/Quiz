@@ -35,6 +35,7 @@ create table if not exists public.game_sessions (
   host_token text not null,
   status text not null default 'lobby' check (status in ('lobby', 'playing', 'finished')),
   access_enabled boolean not null default true,
+  show_answer boolean not null default false,
   show_leaderboard boolean not null default false,
   current_question_index int not null default -1,
   question_started_at timestamptz,
@@ -67,6 +68,7 @@ create unique index if not exists game_sessions_active_code_idx
 
 alter table public.questions add column if not exists image_url text;
 alter table public.game_sessions add column if not exists access_enabled boolean not null default true;
+alter table public.game_sessions add column if not exists show_answer boolean not null default false;
 alter table public.game_sessions add column if not exists show_leaderboard boolean not null default false;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

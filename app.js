@@ -246,6 +246,11 @@ async function renderHostQuiz(quizId) {
       ${connectionNotice()}
       <div class="split">
         <form class="panel form-grid" id="question-form">
+          <div>
+            <p class="eyebrow" id="question-form-mode">Nouvelle question</p>
+            <h2>Ajouter une question</h2>
+            <p class="muted compact">Chaque question peut avoir sa propre image. Tu peux ensuite la modifier ou la supprimer dans la liste.</p>
+          </div>
           <label class="field">
             <span>Question</span>
             <textarea name="question" required maxlength="280" placeholder="Quelle est la capitale de... ?"></textarea>
@@ -284,6 +289,7 @@ async function renderHostQuiz(quizId) {
             </div>
             <button class="primary-button" type="button" data-action="start-session" ${disabledIfOffline()}>Lancer</button>
           </div>
+          <p class="muted compact">Liste des questions. Utilise les boutons pour modifier ou supprimer une question precise.</p>
           <div class="question-editor" id="question-list"></div>
         </div>
       </div>
@@ -381,8 +387,12 @@ function setQuestionFormMode(question) {
 
   const submitButton = form.querySelector("button[type='submit']");
   const cancelButton = form.querySelector("[data-action='cancel-question-edit']");
+  const mode = form.querySelector("#question-form-mode");
+  const title = form.querySelector("h2");
   submitButton.textContent = question ? "Enregistrer" : "Ajouter";
   cancelButton.classList.toggle("hidden", !question);
+  if (mode) mode.textContent = question ? "Modification" : "Nouvelle question";
+  if (title) title.textContent = question ? "Modifier cette question" : "Ajouter une question";
 }
 
 function editQuestion(questionId) {
@@ -416,7 +426,21 @@ async function deleteQuestion(questionId, quizId) {
   }
 
   showToast("Question supprimee.");
+  await resequenceQuestions(quizId);
   await loadQuestions(quizId);
+}
+
+async function resequenceQuestions(quizId) {
+  const { data, error } = await state.supabase
+    .from("questions")
+    .select("id")
+    .eq("quiz_id", quizId)
+    .order("position", { ascending: true });
+  if (error) return;
+
+  await Promise.all(data.map((question, index) => (
+    state.supabase.from("questions").update({ position: index }).eq("id", question.id)
+  )));
 }
 
 async function loadQuestions(quizId) {
@@ -504,7 +528,7 @@ async function renderLiveSession(sessionId) {
           <h1 id="session-title">Session</h1>
           <p>Le code s'affiche aux joueurs, puis chaque question avance au rythme de l'admin.</p>
         </div>
-        <a class="secondary-button" href="#/host">Quitter</a>
+        <button class="secondary-button" type="button" data-action="quit-session">Quitter</button>
       </div>
       ${connectionNotice()}
       <div class="split">
@@ -534,6 +558,10 @@ async function renderLiveSession(sessionId) {
   document.querySelector("[data-action='start-live-game']").addEventListener("click", () => startLiveGame(sessionId));
   document.querySelector("[data-action='continue-live-game']").addEventListener("click", () => continueLiveGame(sessionId));
   document.querySelector("[data-action='end-session']").addEventListener("click", () => endSession(sessionId));
+  document.querySelector("[data-action='quit-session']").addEventListener("click", async () => {
+    await endSession(sessionId);
+    location.hash = "#/host";
+  });
   await refreshHostLive(sessionId);
   subscribeSession(sessionId, () => refreshHostLive(sessionId));
 }
@@ -599,7 +627,7 @@ async function renderPlayers(sessionId) {
 function renderLiveQuestion(question, session) {
   const node = document.querySelector("#live-question");
   if (session.status === "finished") {
-    node.innerHTML = `<div class="empty-state">Partie terminee.</div>`;
+    renderFinalScores(session.id, node);
     return;
   }
 
@@ -618,7 +646,12 @@ function renderLiveQuestion(question, session) {
     <h2>${escapeHtml(question.body)}</h2>
     ${question.image_url ? `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
     <div class="answer-grid">
-      ${question.answers.map((answer) => `<div class="answer-tile">${escapeHtml(answer)}</div>`).join("")}
+      ${question.answers.map((answer, index) => `
+        <div class="answer-tile ${session.show_answer && index === question.correct_index ? "is-correct-answer" : ""}">
+          ${session.show_answer && index === question.correct_index ? `<span class="answer-badge">Bonne reponse</span>` : ""}
+          ${escapeHtml(answer)}
+        </div>
+      `).join("")}
     </div>
   `;
 }
@@ -670,7 +703,7 @@ async function startLiveGame(sessionId) {
 
   const { error: updateError } = await state.supabase
     .from("game_sessions")
-    .update({ current_question_index: 0, status: "playing", access_enabled: false, show_leaderboard: false, question_started_at: new Date().toISOString() })
+    .update({ current_question_index: 0, status: "playing", access_enabled: false, show_answer: false, show_leaderboard: false, question_started_at: new Date().toISOString() })
     .eq("id", sessionId);
   if (updateError) return showToast(updateError.message);
 
@@ -682,7 +715,7 @@ async function continueLiveGame(sessionId) {
 
   const { data: session, error } = await state.supabase
     .from("game_sessions")
-    .select("id,quiz_id,current_question_index,status,show_leaderboard")
+    .select("id,quiz_id,current_question_index,status,show_answer,show_leaderboard")
     .eq("id", sessionId)
     .single();
   if (error) return showToast(error.message);
@@ -692,6 +725,15 @@ async function continueLiveGame(sessionId) {
     .from("questions")
     .select("id", { count: "exact", head: true })
     .eq("quiz_id", session.quiz_id);
+
+  if (!session.show_answer) {
+    const { error: updateError } = await state.supabase
+      .from("game_sessions")
+      .update({ show_answer: true })
+      .eq("id", sessionId);
+    if (updateError) return showToast(updateError.message);
+    return;
+  }
 
   if (!session.show_leaderboard) {
     const { error: updateError } = await state.supabase
@@ -707,7 +749,7 @@ async function continueLiveGame(sessionId) {
 
   const { error: updateError } = await state.supabase
     .from("game_sessions")
-    .update({ current_question_index: nextIndex, status: "playing", show_leaderboard: false, question_started_at: new Date().toISOString() })
+    .update({ current_question_index: nextIndex, status: "playing", show_answer: false, show_leaderboard: false, question_started_at: new Date().toISOString() })
     .eq("id", sessionId);
 
   if (updateError) return showToast(updateError.message);
@@ -715,7 +757,10 @@ async function continueLiveGame(sessionId) {
 
 async function endSession(sessionId) {
   if (!requireSupabase()) return;
-  const { error } = await state.supabase.from("game_sessions").update({ status: "finished", access_enabled: false }).eq("id", sessionId);
+  const { error } = await state.supabase
+    .from("game_sessions")
+    .update({ status: "finished", access_enabled: false, show_answer: false, show_leaderboard: false })
+    .eq("id", sessionId);
   if (error) return showToast(error.message);
   showToast("Partie terminee.");
 }
@@ -827,7 +872,10 @@ async function refreshPlayerView(sessionId) {
   }
 
   if (session.status === "finished") {
-    await renderFinalScores(sessionId, view);
+    localStorage.removeItem(PLAYER_KEY);
+    state.player = null;
+    showToast("Le quiz est termine.");
+    location.hash = "#/";
     return;
   }
 
@@ -855,11 +903,13 @@ async function refreshPlayerView(sessionId) {
     ${question.image_url ? `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
     <div class="choice-grid">
       ${question.answers.map((answer, index) => `
-        <button class="answer-button ${existing?.answer_index === index ? "is-selected" : ""}" type="button" data-answer="${index}" ${existing ? "disabled" : ""}>
+        <button class="answer-button ${existing?.answer_index === index ? "is-selected" : ""} ${session.show_answer && index === question.correct_index ? "is-correct-answer" : ""}" type="button" data-answer="${index}" ${existing || session.show_answer ? "disabled" : ""}>
+          ${session.show_answer && index === question.correct_index ? `<span class="answer-badge">Bonne reponse</span>` : ""}
           ${escapeHtml(answer)}
         </button>
       `).join("")}
     </div>
+    ${existing && !session.show_answer ? `<p class="muted compact">Reponse envoyee. En attente de la correction.</p>` : ""}
   `;
 
   view.querySelectorAll("[data-answer]").forEach((button) => {
@@ -887,7 +937,7 @@ async function submitAnswer(sessionId, question, answerIndex) {
     await state.supabase.rpc("increment_player_score", { player_id_input: state.player.id, points_input: points });
   }
 
-  showToast(isCorrect ? "Bonne reponse, +100 !" : "Reponse envoyee.");
+  showToast("Reponse envoyee.");
   await refreshPlayerView(sessionId);
 }
 
@@ -906,7 +956,7 @@ async function renderFinalScores(sessionId, view) {
 
   view.innerHTML = `
     <p class="eyebrow">Resultats</p>
-    <h2>Top 10 final</h2>
+    <h2>Le quiz est termine, voici le classement</h2>
     <div class="list">
       ${data.map((player, index) => `
         <div class="score-row">
