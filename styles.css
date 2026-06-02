@@ -232,6 +232,19 @@ button:disabled {
   margin-top: 24px;
 }
 
+.quiz-actions,
+.player-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.quiz-menu {
+  margin-top: 8px;
+}
+
 .answer-grid,
 .choice-grid {
   display: grid;
@@ -392,6 +405,35 @@ button:disabled {
   border: 1px solid rgba(47, 134, 255, 0.24);
   color: #b8dcff;
   font-weight: 850;
+}
+
+.compact {
+  margin: 4px 0 0;
+  font-size: 0.86rem;
+}
+
+.question-image-thumb,
+.question-live-image {
+  width: 100%;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.question-image-thumb {
+  max-height: 160px;
+}
+
+.question-live-image {
+  max-height: 360px;
+  margin: 12px 0 16px;
+}
+
+.danger-icon {
+  color: white;
+  background: rgba(240, 95, 120, 0.22);
+  border-color: rgba(240, 95, 120, 0.38);
 }
 
 .game-code {

@@ -35,8 +35,11 @@ La cle `anon` peut etre presente cote navigateur. Les policies du fichier SQL so
 - Creation de quiz par un admin local.
 - Acces admin via code verifie par Supabase.
 - Ajout de questions avec 4 reponses et une bonne reponse.
+- Images de questions via Supabase Storage.
+- Limite de 20 questions par quiz.
 - Creation d'une session avec code a 6 chiffres.
 - Lobby joueur avec pseudo.
+- Verrouillage temporaire des entrees et exclusion de joueurs par l'admin.
 - Questions et scores synchronises via Supabase Realtime.
 - Classement final.
 

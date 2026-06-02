@@ -21,6 +21,7 @@ create table if not exists public.questions (
   quiz_id uuid not null references public.quizzes(id) on delete cascade,
   body text not null,
   answers jsonb not null,
+  image_url text,
   correct_index int not null check (correct_index between 0 and 3),
   duration_seconds int not null default 20 check (duration_seconds between 5 and 120),
   position int not null default 0,
@@ -33,6 +34,7 @@ create table if not exists public.game_sessions (
   code text not null,
   host_token text not null,
   status text not null default 'lobby' check (status in ('lobby', 'playing', 'finished')),
+  access_enabled boolean not null default true,
   current_question_index int not null default -1,
   question_started_at timestamptz,
   created_at timestamptz not null default now()
@@ -62,6 +64,22 @@ create unique index if not exists game_sessions_active_code_idx
   on public.game_sessions (code)
   where status <> 'finished';
 
+alter table public.questions add column if not exists image_url text;
+alter table public.game_sessions add column if not exists access_enabled boolean not null default true;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'question-images',
+  'question-images',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+)
+on conflict (id) do update
+set public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
 create or replace function public.verify_admin_code(admin_code_input text)
 returns boolean
 language sql
@@ -75,6 +93,28 @@ as $$
       and code_hash = extensions.crypt(admin_code_input, code_hash)
   );
 $$;
+
+create or replace function public.enforce_question_limit()
+returns trigger
+language plpgsql
+as $$
+begin
+  if (
+    select count(*)
+    from public.questions
+    where quiz_id = new.quiz_id
+  ) >= 20 then
+    raise exception 'Un quiz ne peut pas depasser 20 questions.';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists questions_limit_before_insert on public.questions;
+create trigger questions_limit_before_insert
+before insert on public.questions
+for each row execute function public.enforce_question_limit();
 
 create or replace function public.increment_player_score(player_id_input uuid, points_input int)
 returns void
@@ -93,6 +133,8 @@ alter table public.game_players enable row level security;
 alter table public.game_answers enable row level security;
 
 drop policy if exists "public read admin codes" on public.admin_codes;
+drop policy if exists "public read question images" on storage.objects;
+drop policy if exists "public upload question images" on storage.objects;
 drop policy if exists "public read quizzes" on public.quizzes;
 drop policy if exists "public insert quizzes" on public.quizzes;
 drop policy if exists "public update quizzes" on public.quizzes;
@@ -105,6 +147,7 @@ drop policy if exists "public update sessions" on public.game_sessions;
 drop policy if exists "public read players" on public.game_players;
 drop policy if exists "public insert players" on public.game_players;
 drop policy if exists "public update players" on public.game_players;
+drop policy if exists "public delete players" on public.game_players;
 drop policy if exists "public read answers" on public.game_answers;
 drop policy if exists "public insert answers" on public.game_answers;
 
@@ -123,9 +166,18 @@ create policy "public update sessions" on public.game_sessions for update using 
 create policy "public read players" on public.game_players for select using (true);
 create policy "public insert players" on public.game_players for insert with check (true);
 create policy "public update players" on public.game_players for update using (true);
+create policy "public delete players" on public.game_players for delete using (true);
 
 create policy "public read answers" on public.game_answers for select using (true);
 create policy "public insert answers" on public.game_answers for insert with check (true);
+
+create policy "public read question images"
+on storage.objects for select
+using (bucket_id = 'question-images');
+
+create policy "public upload question images"
+on storage.objects for insert
+with check (bucket_id = 'question-images');
 
 revoke all on function public.verify_admin_code(text) from public;
 grant execute on function public.verify_admin_code(text) to anon, authenticated;
