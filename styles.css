@@ -436,6 +436,11 @@ button:disabled {
   margin: 12px 0 16px;
 }
 
+.is-hidden-image {
+  filter: blur(22px) saturate(0.7);
+  transform: scale(1.01);
+}
+
 .leaderboard-list {
   display: grid;
   gap: 10px;
@@ -449,6 +454,38 @@ button:disabled {
 .leaderboard-row:first-child {
   border-color: rgba(255, 211, 78, 0.5);
   box-shadow: 0 0 22px rgba(255, 211, 78, 0.12);
+}
+
+.chart-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.chart-row {
+  display: grid;
+  gap: 7px;
+}
+
+.chart-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.chart-track {
+  height: 12px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chart-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
 }
 
 .danger-icon {

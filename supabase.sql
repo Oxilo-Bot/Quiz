@@ -19,6 +19,7 @@ create table if not exists public.quizzes (
 create table if not exists public.questions (
   id uuid primary key default gen_random_uuid(),
   quiz_id uuid not null references public.quizzes(id) on delete cascade,
+  question_type text not null default 'multiple_choice' check (question_type in ('multiple_choice', 'free_text', 'image_reveal')),
   body text not null,
   answers jsonb not null,
   image_url text,
@@ -57,7 +58,8 @@ create table if not exists public.game_answers (
   session_id uuid not null references public.game_sessions(id) on delete cascade,
   player_id uuid not null references public.game_players(id) on delete cascade,
   question_id uuid not null references public.questions(id) on delete cascade,
-  answer_index int not null check (answer_index between 0 and 3),
+  answer_index int check (answer_index between 0 and 9),
+  answer_text text,
   is_correct boolean not null default false,
   points int not null default 0,
   answered_at timestamptz not null default now(),
@@ -69,6 +71,11 @@ create unique index if not exists game_sessions_active_code_idx
   where status <> 'finished';
 
 alter table public.questions add column if not exists image_url text;
+alter table public.questions add column if not exists question_type text not null default 'multiple_choice';
+alter table public.questions drop constraint if exists questions_question_type_check;
+alter table public.questions add constraint questions_question_type_check check (question_type in ('multiple_choice', 'free_text', 'image_reveal'));
+alter table public.questions drop constraint if exists questions_correct_index_check;
+alter table public.questions add constraint questions_correct_index_check check (correct_index between 0 and 9);
 alter table public.questions add column if not exists min_points int not null default 50;
 alter table public.questions add column if not exists max_points int not null default 100;
 alter table public.questions drop constraint if exists questions_min_points_check;
@@ -78,6 +85,10 @@ alter table public.questions add constraint questions_max_points_check check (ma
 alter table public.game_sessions add column if not exists access_enabled boolean not null default true;
 alter table public.game_sessions add column if not exists show_answer boolean not null default false;
 alter table public.game_sessions add column if not exists show_leaderboard boolean not null default false;
+alter table public.game_answers add column if not exists answer_text text;
+alter table public.game_answers alter column answer_index drop not null;
+alter table public.game_answers drop constraint if exists game_answers_answer_index_check;
+alter table public.game_answers add constraint game_answers_answer_index_check check (answer_index between 0 and 9);
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

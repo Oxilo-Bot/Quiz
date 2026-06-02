@@ -252,6 +252,14 @@ async function renderHostQuiz(quizId) {
             <p class="muted compact">Chaque question peut avoir sa propre image. Tu peux ensuite la modifier ou la supprimer dans la liste.</p>
           </div>
           <label class="field">
+            <span>Type de question</span>
+            <select name="question_type" data-action="change-question-type">
+              <option value="multiple_choice">Question a choix</option>
+              <option value="free_text">Reponse libre</option>
+              <option value="image_reveal">Image progressive</option>
+            </select>
+          </label>
+          <label class="field">
             <span>Question</span>
             <textarea name="question" required maxlength="280" placeholder="Quelle est la capitale de... ?"></textarea>
           </label>
@@ -259,19 +267,35 @@ async function renderHostQuiz(quizId) {
             <span>Image de la question</span>
             <input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
           </label>
-          ${[0, 1, 2, 3].map((index) => `
+          <div class="choice-settings">
             <label class="field">
+              <span>Nombre de reponses</span>
+              <select name="answer_count" data-action="change-answer-count">
+                <option value="2">2 reponses</option>
+                <option value="3">3 reponses</option>
+                <option value="4" selected>4 reponses</option>
+                <option value="5">5 reponses</option>
+                <option value="6">6 reponses</option>
+              </select>
+            </label>
+          </div>
+          <div id="answer-fields" class="form-grid choice-settings">
+          ${[0, 1, 2, 3, 4, 5].map((index) => `
+            <label class="field answer-field" data-answer-field="${index}">
               <span>Reponse ${index + 1}</span>
-              <input name="answer_${index}" required maxlength="120" placeholder="${ANSWER_COLORS[index]}" />
+              <input name="answer_${index}" maxlength="120" placeholder="${ANSWER_COLORS[index] || `Choix ${index + 1}`}" />
             </label>
           `).join("")}
-          <label class="field">
+          </div>
+          <label class="field choice-settings">
             <span>Bonne reponse</span>
             <select name="correct_index">
               <option value="0">Reponse 1</option>
               <option value="1">Reponse 2</option>
               <option value="2">Reponse 3</option>
               <option value="3">Reponse 4</option>
+              <option value="4">Reponse 5</option>
+              <option value="5">Reponse 6</option>
             </select>
           </label>
           <label class="field">
@@ -307,9 +331,13 @@ async function renderHostQuiz(quizId) {
   `;
 
   document.querySelector("#question-form").addEventListener("submit", (event) => createQuestion(event, quizId));
+  document.querySelector("[data-action='change-question-type']").addEventListener("change", updateQuestionTypeFields);
+  document.querySelector("[data-action='change-answer-count']").addEventListener("change", updateAnswerFields);
   document.querySelector("[data-action='start-session']").addEventListener("click", () => {
     askConfirmation("Vous etes sur de lancer ce quizz ?", () => startSession(quizId));
   });
+  updateQuestionTypeFields();
+  updateAnswerFields();
   await Promise.all([loadQuizTitle(quizId), loadQuestions(quizId)]);
 }
 
@@ -317,6 +345,38 @@ async function loadQuizTitle(quizId) {
   if (!state.supabase) return;
   const { data } = await state.supabase.from("quizzes").select("title").eq("id", quizId).single();
   if (data) document.querySelector("#quiz-name").textContent = data.title;
+}
+
+function updateQuestionTypeFields() {
+  const form = document.querySelector("#question-form");
+  if (!form) return;
+
+  const type = form.elements.question_type.value;
+  const isFreeText = type === "free_text";
+  form.querySelectorAll(".choice-settings").forEach((node) => node.classList.toggle("hidden", isFreeText));
+  form.elements.image.closest(".field").querySelector("span").textContent = type === "image_reveal"
+    ? "Image a faire deviner"
+    : "Image de la question";
+  updateAnswerFields();
+}
+
+function updateAnswerFields() {
+  const form = document.querySelector("#question-form");
+  if (!form) return;
+
+  const type = form.elements.question_type.value;
+  const count = type === "free_text" ? 0 : Number(form.elements.answer_count.value || 4);
+  form.querySelectorAll("[data-answer-field]").forEach((field) => {
+    const index = Number(field.dataset.answerField);
+    const visible = index < count;
+    field.classList.toggle("hidden", !visible);
+    field.querySelector("input").required = visible;
+  });
+
+  [...form.elements.correct_index.options].forEach((option, index) => {
+    option.hidden = index >= count;
+  });
+  if (Number(form.elements.correct_index.value) >= count) form.elements.correct_index.value = "0";
 }
 
 async function createQuestion(event, quizId) {
@@ -340,6 +400,11 @@ async function createQuestion(event, quizId) {
   const imageFile = form.get("image");
   const imageUrl = imageFile?.size ? await uploadQuestionImage(quizId, imageFile) : null;
   if (imageFile?.size && !imageUrl) return;
+  const questionType = String(form.get("question_type") || "multiple_choice");
+  const answerCount = questionType === "free_text" ? 0 : Number(form.get("answer_count") || 4);
+  const answers = questionType === "free_text"
+    ? []
+    : Array.from({ length: answerCount }, (_, index) => String(form.get(`answer_${index}`)).trim());
   const minPoints = Number(form.get("min_points"));
   const maxPoints = Number(form.get("max_points"));
   if (maxPoints < minPoints) {
@@ -348,10 +413,11 @@ async function createQuestion(event, quizId) {
   }
 
   const payload = {
+    question_type: questionType,
     body: String(form.get("question")).trim(),
-    answers: [0, 1, 2, 3].map((index) => String(form.get(`answer_${index}`)).trim()),
+    answers,
     image_url: imageUrl || editing?.image_url || null,
-    correct_index: Number(form.get("correct_index")),
+    correct_index: questionType === "free_text" ? 0 : Number(form.get("correct_index")),
     duration_seconds: Number(form.get("duration")),
     min_points: minPoints,
     max_points: maxPoints,
@@ -419,7 +485,10 @@ function editQuestion(questionId) {
   if (!question || !form) return;
 
   state.editingQuestion = question;
+  form.elements.question_type.value = question.question_type || "multiple_choice";
   form.elements.question.value = question.body;
+  form.elements.answer_count.value = String(Math.max(2, question.answers?.length || 4));
+  updateQuestionTypeFields();
   question.answers.forEach((answer, index) => {
     form.elements[`answer_${index}`].value = answer;
   });
@@ -495,11 +564,11 @@ async function loadQuestions(quizId) {
       <article class="question-card">
         <header>
           <strong>${index + 1}. ${escapeHtml(question.body)}</strong>
-          <span class="pin">${question.duration_seconds}s</span>
+          <span class="pin">${questionTypeLabel(question)} · ${question.duration_seconds}s</span>
         </header>
         ${question.image_url ? `<img class="question-image-thumb" src="${escapeHtml(question.image_url)}" alt="Image de la question ${index + 1}" />` : ""}
         <p class="muted compact">Points bonne reponse : ${question.min_points ?? 50} a ${question.max_points ?? 100}</p>
-        <p class="muted">${question.answers.map((answer, answerIndex) => answerIndex === question.correct_index ? `✓ ${answer}` : answer).map(escapeHtml).join(" / ")}</p>
+        <p class="muted">${question.question_type === "free_text" ? "Reponse libre avec graphique des reponses" : question.answers.map((answer, answerIndex) => answerIndex === question.correct_index ? `✓ ${answer}` : answer).map(escapeHtml).join(" / ")}</p>
         <div class="row-actions">
           <button class="secondary-button" type="button" data-action="edit-question" data-question-id="${question.id}">Modifier</button>
           <button class="danger-button" type="button" data-action="delete-question" data-question-id="${question.id}" data-quiz-id="${quizId}">Supprimer</button>
@@ -507,6 +576,12 @@ async function loadQuestions(quizId) {
       </article>
     `).join("")
     : `<div class="empty-state">Ajoute au moins une question avant de lancer la partie.</div>`;
+}
+
+function questionTypeLabel(question) {
+  if (question.question_type === "free_text") return "Libre";
+  if (question.question_type === "image_reveal") return "Image progressive";
+  return `${question.answers?.length || 4} choix`;
 }
 
 async function startSession(quizId) {
@@ -653,7 +728,7 @@ function renderLiveQuestion(question, session) {
   }
 
   if (session.show_leaderboard) {
-    renderLeaderboard(session.id, node);
+    question?.question_type === "free_text" ? renderFreeTextChart(session.id, question.id, node) : renderLeaderboard(session.id, node);
     return;
   }
 
@@ -665,9 +740,10 @@ function renderLiveQuestion(question, session) {
   node.innerHTML = `
     <p class="eyebrow">Question ${session.current_question_index + 1}</p>
     <h2>${escapeHtml(question.body)}</h2>
-    ${question.image_url ? `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
+    ${question.image_url ? `<img class="question-live-image ${question.question_type === "image_reveal" && !session.show_answer ? "is-hidden-image" : ""}" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
+    ${question.question_type === "free_text" ? `<div class="empty-state">Les joueurs ecrivent une reponse libre.</div>` : ""}
     <div class="answer-grid">
-      ${question.answers.map((answer, index) => `
+      ${question.question_type === "free_text" ? "" : question.answers.map((answer, index) => `
         <div class="answer-tile ${session.show_answer && index === question.correct_index ? "is-correct-answer" : ""}">
           ${session.show_answer && index === question.correct_index ? `<span class="answer-badge">Bonne reponse</span>` : ""}
           ${escapeHtml(answer)}
@@ -702,6 +778,52 @@ async function renderLeaderboard(sessionId, container = document.querySelector("
       `).join("") : `<div class="empty-state">Aucun score pour l'instant.</div>`}
     </div>
   `;
+}
+
+async function renderFreeTextChart(sessionId, questionId, container = document.querySelector("#live-question")) {
+  const { data, error } = await state.supabase
+    .from("game_answers")
+    .select("answer_text")
+    .eq("session_id", sessionId)
+    .eq("question_id", questionId);
+
+  if (error) {
+    container.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+
+  const counts = new Map();
+  data.forEach((row) => {
+    const answer = normalizeFreeAnswer(row.answer_text);
+    if (!answer) return;
+    counts.set(answer, (counts.get(answer) || 0) + 1);
+  });
+
+  const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
+  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+  container.innerHTML = `
+    <p class="eyebrow">Reponses libres</p>
+    <h2>Graphique des reponses</h2>
+    <div class="chart-list">
+      ${rows.length ? rows.map(([answer, count]) => {
+        const percent = total ? Math.round((count / total) * 100) : 0;
+        return `
+          <div class="chart-row">
+            <div class="chart-label">
+              <strong>${escapeHtml(answer)}</strong>
+              <span>${percent}% · ${count}</span>
+            </div>
+            <div class="chart-track"><span style="width: ${percent}%"></span></div>
+          </div>
+        `;
+      }).join("") : `<div class="empty-state">Aucune reponse recue.</div>`}
+    </div>
+  `;
+}
+
+function normalizeFreeAnswer(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 80).toLowerCase();
 }
 
 async function startLiveGame(sessionId) {
@@ -912,16 +1034,36 @@ async function refreshPlayerView(sessionId) {
 
   const { data: existing } = await state.supabase
     .from("game_answers")
-    .select("id,answer_index")
+    .select("id,answer_index,answer_text")
     .eq("session_id", sessionId)
     .eq("player_id", state.player.id)
     .eq("question_id", question.id)
     .maybeSingle();
 
+  if (question.question_type === "free_text") {
+    view.innerHTML = `
+      <p class="eyebrow">Question ${session.current_question_index + 1}</p>
+      <h2>${escapeHtml(question.body)}</h2>
+      ${question.image_url ? `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
+      ${session.show_leaderboard ? "" : `
+        <form class="form-grid" id="free-answer-form">
+          <label class="field">
+            <span>Ta reponse</span>
+            <input name="answer_text" maxlength="120" required ${existing || session.show_answer ? "disabled" : ""} value="${escapeHtml(existing?.answer_text || "")}" />
+          </label>
+          <button class="primary-button" type="submit" ${existing || session.show_answer ? "disabled" : ""}>Envoyer</button>
+        </form>
+      `}
+      ${existing && !session.show_leaderboard ? `<p class="muted compact">Reponse envoyee. En attente des resultats.</p>` : ""}
+    `;
+    view.querySelector("#free-answer-form")?.addEventListener("submit", (event) => submitFreeAnswer(event, sessionId, question));
+    return;
+  }
+
   view.innerHTML = `
     <p class="eyebrow">Question ${session.current_question_index + 1}</p>
     <h2>${escapeHtml(question.body)}</h2>
-    ${question.image_url ? `<img class="question-live-image" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
+    ${question.image_url ? `<img class="question-live-image ${question.question_type === "image_reveal" && !session.show_answer ? "is-hidden-image" : ""}" src="${escapeHtml(question.image_url)}" alt="Image de la question" />` : ""}
     <div class="choice-grid">
       ${question.answers.map((answer, index) => `
         <button class="answer-button ${existing?.answer_index === index ? "is-selected" : ""} ${session.show_answer && index === question.correct_index ? "is-correct-answer" : ""}" type="button" data-answer="${index}" ${existing || session.show_answer ? "disabled" : ""}>
@@ -958,6 +1100,29 @@ async function submitAnswer(sessionId, question, answerIndex) {
     await state.supabase.rpc("increment_player_score", { player_id_input: state.player.id, points_input: points });
   }
 
+  showToast("Reponse envoyee.");
+  await refreshPlayerView(sessionId);
+}
+
+async function submitFreeAnswer(event, sessionId, question) {
+  event.preventDefault();
+  if (!requireSupabase()) return;
+
+  const form = new FormData(event.currentTarget);
+  const answerText = String(form.get("answer_text") || "").trim();
+  if (!answerText) return;
+
+  const { error } = await state.supabase.from("game_answers").insert({
+    session_id: sessionId,
+    player_id: state.player.id,
+    question_id: question.id,
+    answer_index: null,
+    answer_text: answerText,
+    is_correct: false,
+    points: 0,
+  });
+
+  if (error) return showToast(error.message);
   showToast("Reponse envoyee.");
   await refreshPlayerView(sessionId);
 }

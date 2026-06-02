@@ -38,6 +38,7 @@ La public/publishable key peut etre presente cote navigateur. Ne mets jamais la 
 - Images de questions via Supabase Storage.
 - Modification et suppression des questions par l'admin.
 - Fourchette de points minimum/maximum par question avec bonus de vitesse.
+- Types de questions : choix, reponse libre avec graphique, image progressive.
 - Limite de 20 questions par quiz.
 - Creation d'une session avec code a 6 chiffres.
 - Lobby joueur avec pseudo.
