@@ -202,7 +202,6 @@ async function loadQuizzes() {
   const { data, error } = await state.supabase
     .from("quizzes")
     .select("id,title,description,created_at")
-    .eq("host_token", state.hostToken)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -221,23 +220,69 @@ async function loadQuizzes() {
           </div>
         </header>
         <p class="muted">${escapeHtml(quiz.description || "Sans description")}</p>
+        <form class="form-grid quiz-edit-form hidden" data-quiz-edit="${quiz.id}">
+          <label class="field">
+            <span>Nouveau titre</span>
+            <input name="title" maxlength="90" required value="${escapeHtml(quiz.title)}" />
+          </label>
+          <label class="field">
+            <span>Description</span>
+            <textarea name="description" maxlength="260">${escapeHtml(quiz.description || "")}</textarea>
+          </label>
+          <div class="row-actions">
+            <button class="primary-button" type="submit" data-quiz-id="${quiz.id}">Enregistrer</button>
+            <button class="secondary-button" type="button" data-action="cancel-quiz-edit" data-quiz-id="${quiz.id}">Annuler</button>
+          </div>
+        </form>
         <div class="row-actions quiz-menu hidden" data-quiz-menu="${quiz.id}">
           <a class="primary-button" href="#/host/${quiz.id}">Modifier</a>
+          <button class="secondary-button" type="button" data-action="toggle-quiz-edit" data-quiz-id="${quiz.id}">Renommer</button>
           <button class="secondary-button" type="button" data-action="confirm-start-session" data-quiz-id="${quiz.id}" data-quiz-title="${escapeHtml(quiz.title)}">Lancer</button>
           <button class="danger-button" type="button" data-action="delete-quiz" data-quiz-id="${quiz.id}" data-quiz-title="${escapeHtml(quiz.title)}">Supprimer</button>
         </div>
       </article>
     `).join("")
     : `<div class="empty-state">Aucun quiz pour l'instant.</div>`;
+
+  list.querySelectorAll(".quiz-edit-form").forEach((form) => {
+    form.addEventListener("submit", updateQuiz);
+  });
 }
 
 async function deleteQuiz(quizId) {
   if (!requireSupabase()) return;
 
-  const { error } = await state.supabase.from("quizzes").delete().eq("id", quizId);
+  const { data, error } = await state.supabase
+    .from("quizzes")
+    .delete()
+    .eq("id", quizId)
+    .select("id");
   if (error) return showToast(error.message);
+  if (!data?.length) return showToast("Quiz introuvable ou deja supprime.");
 
   showToast("Quiz supprime.");
+  await loadQuizzes();
+}
+
+async function updateQuiz(event) {
+  event.preventDefault();
+  if (!requireSupabase()) return;
+
+  const form = event.currentTarget;
+  const quizId = event.submitter.dataset.quizId;
+  const data = new FormData(form);
+  const payload = {
+    title: String(data.get("title") || "").trim(),
+    description: String(data.get("description") || "").trim(),
+  };
+
+  const { error } = await state.supabase
+    .from("quizzes")
+    .update(payload)
+    .eq("id", quizId);
+  if (error) return showToast(error.message);
+
+  showToast("Quiz modifie.");
   await loadQuizzes();
 }
 
@@ -672,7 +717,7 @@ async function renderLiveSession(sessionId) {
         </div>
         <div class="panel">
           <div class="status-strip">
-            <strong>Joueurs et scores</strong>
+            <strong>Joueurs</strong>
             <span class="pin" id="session-status">Lobby</span>
           </div>
           <div class="list" id="player-list"></div>
@@ -711,7 +756,7 @@ async function refreshHostLive(sessionId) {
   document.querySelector("#session-status").textContent = `${session.status} - ${session.access_enabled ? "entrees ouvertes" : "entrees bloquees"}`;
   updateLiveControls(session);
 
-  await renderPlayers(sessionId);
+  await renderPlayers(sessionId, session);
   renderLiveQuestion(current, session);
 }
 
@@ -725,13 +770,14 @@ function updateLiveControls(session) {
   accessButtons.forEach((button) => button.classList.toggle("hidden", session.status !== "lobby"));
 }
 
-async function renderPlayers(sessionId) {
+async function renderPlayers(sessionId, session = null) {
   const list = document.querySelector("#player-list");
+  const canShowScores = session?.show_leaderboard || session?.status === "finished";
   const { data, error } = await state.supabase
     .from("game_players")
     .select("id,nickname,score,joined_at")
     .eq("session_id", sessionId)
-    .order("score", { ascending: false });
+    .order(canShowScores ? "score" : "joined_at", { ascending: canShowScores ? false : true });
 
   if (error) {
     list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -743,7 +789,7 @@ async function renderPlayers(sessionId) {
       <div class="score-row">
         <strong>${index + 1}. ${escapeHtml(player.nickname)}</strong>
         <div class="player-actions">
-          <span class="pin">${player.score} pts</span>
+          ${canShowScores ? `<span class="pin">${player.score} pts</span>` : `<span class="pin">Connecte</span>`}
           <button class="icon-button danger-icon" type="button" aria-label="Faire quitter ${escapeHtml(player.nickname)}" data-action="kick-player" data-player-id="${player.id}">x</button>
         </div>
       </div>
@@ -1370,6 +1416,14 @@ document.addEventListener("click", (event) => {
     const quizId = event.target.dataset.quizId;
     const quizTitle = event.target.dataset.quizTitle || "ce quiz";
     askConfirmation(`Vous etes sur de lancer le quizz "${quizTitle}" ?`, () => startSession(quizId));
+  }
+  if (event.target.matches("[data-action='toggle-quiz-edit']")) {
+    const quizId = event.target.dataset.quizId;
+    document.querySelector(`[data-quiz-edit="${quizId}"]`)?.classList.toggle("hidden");
+  }
+  if (event.target.matches("[data-action='cancel-quiz-edit']")) {
+    const quizId = event.target.dataset.quizId;
+    document.querySelector(`[data-quiz-edit="${quizId}"]`)?.classList.add("hidden");
   }
   if (event.target.matches("[data-action='delete-quiz']")) {
     const quizId = event.target.dataset.quizId;
