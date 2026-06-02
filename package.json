@@ -1,0 +1,15 @@
+{
+  "name": "quiz-live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Petit quiz temps reel style Kahoot avec GitHub Pages et Supabase.",
+  "scripts": {
+    "start": "npx serve .",
+    "dev": "npx serve .",
+    "check": "node --check app.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "serve": "^14.2.4"
+  }
+}
