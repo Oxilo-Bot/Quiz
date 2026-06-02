@@ -62,10 +62,6 @@ create unique index if not exists game_sessions_active_code_idx
   on public.game_sessions (code)
   where status <> 'finished';
 
-insert into public.admin_codes (label, code_hash)
-select 'Code admin par defaut', extensions.crypt('123456', extensions.gen_salt('bf'))
-where not exists (select 1 from public.admin_codes);
-
 create or replace function public.verify_admin_code(admin_code_input text)
 returns boolean
 language sql

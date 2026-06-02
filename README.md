@@ -19,7 +19,7 @@ npm run dev
 4. Dans le site, va sur `Admin`, puis clique sur `Configurer Supabase`.
 5. Colle l'URL du projet et la `anon key`.
 
-Le code admin par defaut cree par `supabase.sql` est `123456`. Change-le dans Supabase en remplacant ou ajoutant une ligne dans `admin_codes` avec un hash genere par `crypt('ton-code', gen_salt('bf'))`.
+Le code admin n'est pas stocke dans les fichiers du site. Cree-le directement dans Supabase en ajoutant une ligne dans `admin_codes` avec un hash genere par `extensions.crypt('ton-code', extensions.gen_salt('bf'))`.
 
 La cle `anon` peut etre presente cote navigateur. Les policies du fichier SQL sont ouvertes pour faciliter le prototype, sauf la table `admin_codes` qui passe par la fonction `verify_admin_code`. Pour une version publique serieuse, il faudra ajouter Supabase Auth et limiter les droits admin.
 

@@ -1,7 +1,6 @@
 const CONFIG_KEY = "quiz-live:supabase-config";
 const HOST_TOKEN_KEY = "quiz-live:host-token";
 const PLAYER_KEY = "quiz-live:player";
-const ADMIN_ACCESS_KEY = "quiz-live:admin-access";
 const ANSWER_COLORS = ["Rouge", "Bleu", "Jaune", "Vert"];
 
 const state = {
@@ -10,7 +9,7 @@ const state = {
   subscriptions: [],
   hostToken: localStorage.getItem(HOST_TOKEN_KEY) || crypto.randomUUID(),
   player: loadJson(PLAYER_KEY, null),
-  adminAccess: localStorage.getItem(ADMIN_ACCESS_KEY) === "true",
+  adminAccess: false,
 };
 
 localStorage.setItem(HOST_TOKEN_KEY, state.hostToken);
@@ -23,6 +22,7 @@ const settingsForm = document.querySelector("#settings-form");
 init();
 
 function init() {
+  localStorage.removeItem("quiz-live:admin-access");
   connectSupabase();
   bindGlobalEvents();
   window.addEventListener("hashchange", render);
@@ -111,6 +111,7 @@ function renderAdminGate() {
 
   app.innerHTML = `
     <section class="join-screen">
+      <a class="back-link" href="#/" aria-label="Retour a l'accueil">&larr; Retour</a>
       <form class="join-card form-grid" id="admin-form">
         <div class="join-heading">
           <p class="eyebrow">Acces admin</p>
@@ -142,13 +143,12 @@ async function verifyAdminCode(event) {
   if (!data) return showToast("Code admin incorrect.");
 
   state.adminAccess = true;
-  localStorage.setItem(ADMIN_ACCESS_KEY, "true");
   showToast("Acces admin valide.");
   location.hash = "#/host";
 }
 
 async function renderHost() {
-  if (!state.adminAccess) return renderAdminGate();
+  if (!state.adminAccess) return redirectHome();
 
   app.innerHTML = `
     <section class="page">
@@ -241,7 +241,7 @@ async function loadQuizzes() {
 }
 
 async function renderHostQuiz(quizId) {
-  if (!state.adminAccess) return renderAdminGate();
+  if (!state.adminAccess) return redirectHome();
   if (!quizId) return renderHost();
 
   app.innerHTML = `
@@ -390,7 +390,7 @@ async function startSession(quizId) {
 }
 
 async function renderLiveSession(sessionId) {
-  if (!state.adminAccess) return renderAdminGate();
+  if (!state.adminAccess) return redirectHome();
   if (!sessionId) return renderHost();
 
   app.innerHTML = `
@@ -738,6 +738,11 @@ function requireSupabase() {
   showToast("Configure Supabase avant de continuer.");
   openSettings();
   return false;
+}
+
+function redirectHome() {
+  showToast("Passe par l'accueil puis entre le code admin.");
+  location.hash = "#/";
 }
 
 document.addEventListener("click", (event) => {
