@@ -905,7 +905,7 @@ async function startLiveGame(sessionId) {
 
   const { error: updateError } = await state.supabase
     .from("game_sessions")
-    .update({ current_question_index: 0, status: "playing", access_enabled: false, show_answer: false, show_leaderboard: false, question_started_at: new Date().toISOString() })
+    .update({ current_question_index: 0, status: "playing", access_enabled: false, show_answer: false, show_leaderboard: false, points_awarded: false, question_started_at: new Date().toISOString() })
     .eq("id", sessionId);
   if (updateError) return showToast(updateError.message);
 
@@ -917,7 +917,7 @@ async function continueLiveGame(sessionId) {
 
   const { data: session, error } = await state.supabase
     .from("game_sessions")
-    .select("id,quiz_id,current_question_index,status,show_answer,show_leaderboard")
+    .select("id,quiz_id,current_question_index,status,show_answer,show_leaderboard,points_awarded")
     .eq("id", sessionId)
     .single();
   if (error) return showToast(error.message);
@@ -934,6 +934,7 @@ async function continueLiveGame(sessionId) {
       .update({ show_answer: true })
       .eq("id", sessionId);
     if (updateError) return showToast(updateError.message);
+    await awardQuestionPoints(sessionId, session.current_question_index);
     return;
   }
 
@@ -951,17 +952,55 @@ async function continueLiveGame(sessionId) {
 
   const { error: updateError } = await state.supabase
     .from("game_sessions")
-    .update({ current_question_index: nextIndex, status: "playing", show_answer: false, show_leaderboard: false, question_started_at: new Date().toISOString() })
+    .update({ current_question_index: nextIndex, status: "playing", show_answer: false, show_leaderboard: false, points_awarded: false, question_started_at: new Date().toISOString() })
     .eq("id", sessionId);
 
   if (updateError) return showToast(updateError.message);
+}
+
+async function awardQuestionPoints(sessionId, questionIndex) {
+  const { data: session, error: sessionError } = await state.supabase
+    .from("game_sessions")
+    .select("id,points_awarded,quizzes(questions(*))")
+    .eq("id", sessionId)
+    .single();
+  if (sessionError) return showToast(sessionError.message);
+  if (session.points_awarded) return;
+
+  const { data: lock, error: lockError } = await state.supabase
+    .from("game_sessions")
+    .update({ points_awarded: true })
+    .eq("id", sessionId)
+    .eq("points_awarded", false)
+    .select("id")
+    .maybeSingle();
+  if (lockError) return showToast(lockError.message);
+  if (!lock) return;
+
+  const questions = [...(session.quizzes?.questions || [])].sort((a, b) => a.position - b.position);
+  const question = questions[questionIndex];
+  if (!question || question.question_type === "free_text") return;
+
+  const { data: answers, error: answersError } = await state.supabase
+    .from("game_answers")
+    .select("id,player_id,points,is_correct")
+    .eq("session_id", sessionId)
+    .eq("question_id", question.id)
+    .eq("is_correct", true);
+  if (answersError) return showToast(answersError.message);
+
+  await Promise.all((answers || []).map((answer) => (
+    answer.points > 0
+      ? state.supabase.rpc("increment_player_score", { player_id_input: answer.player_id, points_input: answer.points })
+      : Promise.resolve()
+  )));
 }
 
 async function endSession(sessionId) {
   if (!requireSupabase()) return;
   const { error } = await state.supabase
     .from("game_sessions")
-    .update({ status: "finished", access_enabled: false, show_answer: false, show_leaderboard: false })
+    .update({ status: "finished", access_enabled: false, show_answer: false, show_leaderboard: false, points_awarded: false })
     .eq("id", sessionId);
   if (error) return showToast(error.message);
   showToast("Partie terminee.");
@@ -1161,10 +1200,6 @@ async function submitAnswer(sessionId, question, answerIndex) {
 
   if (error) return showToast(error.message);
 
-  if (points > 0) {
-    await state.supabase.rpc("increment_player_score", { player_id_input: state.player.id, points_input: points });
-  }
-
   showToast("Reponse envoyee.");
   await refreshPlayerView(sessionId);
 }
@@ -1175,7 +1210,7 @@ function renderPlayerAnswerFeedback(answer, session) {
   if (answer.is_correct) {
     return `
       <div class="answer-feedback is-good">
-        <span class="feedback-icon">⬆️</span>
+        <span class="feedback-icon">✅</span>
         <strong>+${answer.points || 0} pts</strong>
       </div>
     `;

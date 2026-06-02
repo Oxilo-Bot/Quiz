@@ -40,6 +40,7 @@ create table if not exists public.game_sessions (
   access_enabled boolean not null default true,
   show_answer boolean not null default false,
   show_leaderboard boolean not null default false,
+  points_awarded boolean not null default false,
   current_question_index int not null default -1,
   question_started_at timestamptz,
   created_at timestamptz not null default now()
@@ -85,6 +86,7 @@ alter table public.questions add constraint questions_max_points_check check (ma
 alter table public.game_sessions add column if not exists access_enabled boolean not null default true;
 alter table public.game_sessions add column if not exists show_answer boolean not null default false;
 alter table public.game_sessions add column if not exists show_leaderboard boolean not null default false;
+alter table public.game_sessions add column if not exists points_awarded boolean not null default false;
 alter table public.game_answers add column if not exists answer_text text;
 alter table public.game_answers alter column answer_index drop not null;
 alter table public.game_answers drop constraint if exists game_answers_answer_index_check;
