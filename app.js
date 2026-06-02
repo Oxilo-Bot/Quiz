@@ -1020,7 +1020,7 @@ async function renderPlay(sessionId) {
   if (!state.player || state.player.session_id !== sessionId) return renderHome();
 
   app.innerHTML = `
-    <section class="page">
+    <section class="page player-page">
       <div class="page-title">
         <div>
           <p class="eyebrow">Joueur</p>
@@ -1030,6 +1030,10 @@ async function renderPlay(sessionId) {
       </div>
       ${connectionNotice()}
       <div class="panel" id="player-view"></div>
+      <div class="player-score-bar" id="player-score-bar">
+        <span>Mes points</span>
+        <strong>0 pts</strong>
+      </div>
     </section>
   `;
 
@@ -1042,7 +1046,7 @@ async function refreshPlayerView(sessionId) {
 
   const { data: playerStillHere, error: playerError } = await state.supabase
     .from("game_players")
-    .select("id")
+    .select("id,nickname,score")
     .eq("id", state.player.id)
     .maybeSingle();
 
@@ -1054,6 +1058,7 @@ async function refreshPlayerView(sessionId) {
     location.hash = "#/";
     return;
   }
+  updatePlayerScoreBar(playerStillHere);
 
   const { data: session, error } = await state.supabase
     .from("game_sessions")
@@ -1093,7 +1098,7 @@ async function refreshPlayerView(sessionId) {
 
   const { data: existing } = await state.supabase
     .from("game_answers")
-    .select("id,answer_index,answer_text")
+    .select("id,answer_index,answer_text,is_correct,points")
     .eq("session_id", sessionId)
     .eq("player_id", state.player.id)
     .eq("question_id", question.id)
@@ -1131,6 +1136,7 @@ async function refreshPlayerView(sessionId) {
         </button>
       `).join("")}
     </div>
+    ${renderPlayerAnswerFeedback(existing, session)}
     ${existing && !session.show_answer ? `<p class="muted compact">Reponse envoyee. En attente de la correction.</p>` : ""}
   `;
 
@@ -1161,6 +1167,32 @@ async function submitAnswer(sessionId, question, answerIndex) {
 
   showToast("Reponse envoyee.");
   await refreshPlayerView(sessionId);
+}
+
+function renderPlayerAnswerFeedback(answer, session) {
+  if (!session.show_answer || !answer) return "";
+
+  if (answer.is_correct) {
+    return `
+      <div class="answer-feedback is-good">
+        <span class="feedback-icon">⬆️</span>
+        <strong>+${answer.points || 0} pts</strong>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="answer-feedback is-bad">
+      <span class="feedback-icon">❌</span>
+      <strong>Mauvaise reponse</strong>
+    </div>
+  `;
+}
+
+function updatePlayerScoreBar(player) {
+  const bar = document.querySelector("#player-score-bar");
+  if (!bar || !player) return;
+  bar.querySelector("strong").textContent = `${player.score || 0} pts`;
 }
 
 async function submitFreeAnswer(event, sessionId, question) {
